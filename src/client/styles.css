@@ -103,9 +103,13 @@
   /* iOS 26 installed PWAs (viewport-fit=cover + black-translucent) undercount
      100dvh and 100% by the top safe-area inset, leaving a dead strip at the
      bottom. Only lvh reports the full screen, and standalone has no browser
-     chrome for lvh to over-reach. */
+     chrome for lvh to over-reach. iOS only (-webkit-touch-callout is
+     WebKit-on-iOS): Android Chromium (e.g. Brave) can keep a title bar in
+     standalone and counts it in lvh, pushing the composer off-screen. */
   @media (display-mode: standalone) {
-    html { height: 100lvh; }
+    @supports (-webkit-touch-callout: none) {
+      html { height: 100lvh; }
+    }
   }
   body {
     @apply bg-surface sm:bg-bg text-text font-sans text-base m-0;
