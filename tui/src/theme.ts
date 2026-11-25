@@ -18,6 +18,14 @@ export const COLORS = {
   onAccent: '#1a1b26',
 }
 
+/** Stacking order of what is drawn above the layout. */
+export const LAYERS = {
+  modal: 100,
+  /** The hint bar, above a dialog's backdrop since it shows the dialog's keys. */
+  hints: 150,
+  toasts: 200,
+}
+
 /** Lights `frame`'s border while `inner` has focus. */
 export function highlightOnFocus(frame: BoxRenderable, inner: Renderable): void {
   inner.on(RenderableEvents.FOCUSED, () => { frame.borderColor = COLORS.accent })

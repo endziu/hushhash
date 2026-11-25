@@ -1,4 +1,4 @@
-import { BoxRenderable, TextareaRenderable, type CliRenderer } from '@opentui/core'
+import { BoxRenderable, RenderableEvents, TextareaRenderable, type CliRenderer } from '@opentui/core'
 import { COLORS, highlightOnFocus } from './theme'
 
 /** The message box. Enter calls `onSubmit`; Alt+Enter, Shift+Enter and Ctrl+J add a line. */
@@ -23,6 +23,12 @@ export class Composer {
 
   get text(): string {
     return this.input.plainText
+  }
+
+  /** Runs `listener` whenever this gains or loses focus. */
+  onFocusChange(listener: () => void): void {
+    this.input.on(RenderableEvents.FOCUSED, listener)
+    this.input.on(RenderableEvents.BLURRED, listener)
   }
 
   get focused(): boolean {

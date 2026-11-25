@@ -75,6 +75,20 @@ async function clickConversation(address: Address) {
   await setup.renderOnce()
 }
 
+/** The status bar, on the top line. */
+function statusLine(): string {
+  return frame().split('\n')[0]!
+}
+
+/** The hint bar, on the bottom line. */
+function hintLine(): string {
+  return frame().trimEnd().split('\n').at(-1)!
+}
+
+function shownAway(): boolean {
+  return / away\b/.test(statusLine())
+}
+
 function paneTitle(): string {
   return frame().split('\n')[1]!.slice(26)
 }
@@ -118,12 +132,12 @@ test('an unfocused terminal leaves messages unopened and lets push through; focu
 test('a terminal that never reports focus goes away when idle; a key press brings it back', async () => {
   await start(undefined, 32, 1000)
   savePushSubscription(identitySession.address, { endpoint: 'https://push.invalid/tui', p256dh: 'x', auth: 'y' })
-  await until(() => frame().includes('away: new messages stay unopened'), 'idle', 3000)
+  await until(() => shownAway(), 'idle', 3000)
   await Bun.sleep(500) // attention settles, then reaches the server
   await setup.mockInput.typeText(`/open ${alice.identity.address}`)
   setup.mockInput.pressEnter()
-  await until(() => !frame().includes('away: new messages stay unopened'), 'typing counts as input')
-  await until(() => frame().includes('away: new messages stay unopened'), 'idle again', 3000)
+  await until(() => !shownAway(), 'typing counts as input')
+  await until(() => shownAway(), 'idle again', 3000)
   await Bun.sleep(500)
   const away = await alice.send(identitySession.address, 'while idle')
   await Bun.sleep(600)
@@ -270,18 +284,68 @@ test('keys and clicks in an open dialog still count as attention', async () => {
   await start(undefined, 32, 1000)
   setup.mockInput.pressKey('F1' as never)
   await until(() => frame().includes(' Help '), 'help open')
-  await until(() => frame().includes('away: new messages stay unopened'), 'idle', 3000)
+  await until(() => shownAway(), 'idle', 3000)
   setup.mockInput.pressArrow('down')
-  await until(() => !frame().includes('away: new messages stay unopened'), 'a key in the dialog counts')
+  await until(() => !shownAway(), 'a key in the dialog counts')
   expect(frame()).toContain(' Help ')
 
-  await until(() => frame().includes('away: new messages stay unopened'), 'idle again', 3000)
+  await until(() => shownAway(), 'idle again', 3000)
   const lines = frame().split('\n')
   const y = lines.findIndex(line => line.includes('Commands'))
   await setup.mockMouse.click(lines[y]!.indexOf('Commands'), y)
-  await until(() => !frame().includes('away: new messages stay unopened'), 'a click in the dialog counts')
+  await until(() => !shownAway(), 'a click in the dialog counts')
   expect(frame()).toContain(' Help ')
 })
+
+test('the status bar shows the server, lifetime and a compact address', async () => {
+  await start()
+  const line = statusLine()
+  expect(line).toContain('● connected')
+  expect(line).toContain(server.url.host)
+  expect(line).toContain('lifetime 30m')
+  expect(line).toContain(shortAddress(identitySession.address))
+  expect(line).not.toContain(checksumAddress(identitySession.address))
+})
+
+test('the hint bar shows the keys of whatever has focus', async () => {
+  await start()
+  expect(hintLine()).toContain('Enter send')
+  expect(hintLine()).toContain('F1 help')
+
+  setup.mockInput.pressTab()
+  await until(() => hintLine().includes('Enter open'), 'list hints')
+  expect(hintLine()).toContain('↑↓ move')
+  expect(hintLine()).not.toContain('Enter send')
+
+  await setup.mockInput.typeText('?')
+  await until(() => hintLine().includes('Esc close'), 'help dialog hints, above its backdrop')
+  setup.mockInput.pressEscape()
+  await until(() => hintLine().includes('Enter open'), 'list hints again')
+
+  await setup.mockInput.typeText('\t/clear')
+  setup.mockInput.pressEnter()
+  await until(() => hintLine().includes('y delete'), 'confirm hints')
+  setup.mockInput.pressEscape()
+  await until(() => hintLine().includes('Enter send'), 'composer hints again')
+})
+
+test('a narrow terminal drops the least important hints first', async () => {
+  await start()
+  setup.resize(44, 32)
+  await until(() => !hintLine().includes('Ctrl+C'), 'quit hint dropped')
+  expect(hintLine()).toContain('Enter send')
+  expect(hintLine()).toContain('F1 help')
+  expect(statusLine()).toContain('● connected')
+})
+
+test('a lost connection counts down to the next attempt, then reconnects', async () => {
+  await start()
+  const port = server.port
+  await server.stop(true)
+  await until(() => /◐ reconnecting in \ds/.test(statusLine()), 'countdown', 4000)
+  server = Bun.serve({ port, hostname: '127.0.0.1', fetch: createFetch() })
+  await until(() => statusLine().includes('● connected'), 'reconnected', 8000)
+}, 15_000)
 
 test('command results and errors show as toasts that go away', async () => {
   await start()

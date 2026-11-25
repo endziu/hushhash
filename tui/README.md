@@ -21,6 +21,13 @@ messages (default 30m, as in the browser).
 
 ## Use
 
+The top line shows the live connection (`● connected`, `◐ reconnecting in 4s` with a countdown to
+the next attempt, or `○ offline` after three failed attempts in a row, with the reason when it
+fits), the server (`prod`, `local` or its host), the lifetime of new messages, `away` while you
+are away (see [Attention](#attention)) and your address in short form; `/address` shows it in
+full. The bottom line shows the keys that work where you are: the composer, the conversation list
+or an open dialog. A narrow terminal drops the less important parts of both lines first.
+
 | Key | Action |
 |---|---|
 | Enter | Send |

@@ -2,7 +2,8 @@ import {
   BoxRenderable, InputRenderable, InputRenderableEvents, ScrollBoxRenderable, StyledText, TextRenderable,
   bg, fg, t, type CliRenderer, type KeyEvent, type Renderable,
 } from '@opentui/core'
-import { COLORS } from './theme'
+import type { Hint } from './hints'
+import { COLORS, LAYERS } from './theme'
 
 export interface ModalOptions {
   title: string
@@ -23,7 +24,7 @@ export interface PromptOptions {
   label?: string
   value?: string
   placeholder?: string
-  /** What Enter does, for the hint line, such as "save". */
+  /** What Enter does, for the hint bar, such as "save". */
   action?: string
   /** A problem with `value` to show under the input, or null to accept it. */
   validate?: (value: string) => string | null
@@ -32,10 +33,14 @@ export interface PromptOptions {
 const DEFAULT_WIDTH = 64
 // Borders and the padding either side of the body.
 const FRAME_COLUMNS = 4
+// The top and bottom borders.
+const FRAME_ROWS = 2
 
 /** What a modal is made of, as each kind builds it. */
 interface ModalParts {
   frame: BoxRenderable
+  /** Its keys, for the hint bar. */
+  hints: readonly Hint[]
   onKey: (key: KeyEvent) => void
   /** Gets focus while the modal is open; nothing does if absent. */
   focus?: Renderable
@@ -65,9 +70,10 @@ export class Modals {
   private readonly backdrop: BoxRenderable
   private current: MountedModal | null = null
 
-  constructor(private readonly renderer: CliRenderer, parent: Renderable) {
+  /** `onChange` runs after a modal opens or closes. */
+  constructor(private readonly renderer: CliRenderer, parent: Renderable, private readonly onChange: () => void = () => {}) {
     this.backdrop = new BoxRenderable(renderer, {
-      position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', zIndex: 100,
+      position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', zIndex: LAYERS.modal,
       justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backdrop, visible: false,
       onMouseDown: event => {
         // Nothing in or under a modal takes focus from a click.
@@ -80,6 +86,11 @@ export class Modals {
 
   get isOpen(): boolean {
     return this.current !== null
+  }
+
+  /** The open modal's keys; null when none is open. */
+  get hints(): readonly Hint[] | null {
+    return this.current?.hints ?? null
   }
 
   /** Gives `key` to the open modal; false when none is open. */
@@ -97,8 +108,9 @@ export class Modals {
   /** Shows `body` until Esc, Enter or q. */
   show({ title, body, width = DEFAULT_WIDTH }: ModalOptions): Promise<void> {
     return this.present<void>(undefined, finish => {
-      const frame = this.frame(title, '↑/↓ scroll · Esc close', width)
-      const rows = () => wrappedRows(body, this.innerWidth(width))
+      const frame = this.frame(title, width)
+      // Capped to the screen, since flex does not shrink a height set after the first layout.
+      const rows = () => Math.min(wrappedRows(body, this.innerWidth(width)), this.innerHeight())
       const scroll = new ScrollBoxRenderable(this.renderer, { height: rows(), flexShrink: 1, minHeight: 1 })
       const fit = () => { scroll.height = rows() }
       this.renderer.on('resize', fit)
@@ -106,6 +118,7 @@ export class Modals {
       frame.add(scroll)
       return {
         frame,
+        hints: [{ keys: '↑↓', action: 'scroll', priority: 1 }, { keys: 'Esc', action: 'close', priority: 0 }],
         dispose: () => this.renderer.off('resize', fit),
         onKey: key => {
           key.preventDefault()
@@ -126,7 +139,7 @@ export class Modals {
    */
   confirm({ title, body, action }: ConfirmOptions): Promise<boolean> {
     return this.present(false, finish => {
-      const frame = this.frame(title, '←/→ choose · Enter · y/n · Esc cancel')
+      const frame = this.frame(title)
       frame.add(this.text(body))
       const row = new BoxRenderable(this.renderer, { flexDirection: 'row', justifyContent: 'flex-end', gap: 2, marginTop: 1, flexShrink: 0 })
       const labels = ['Cancel', action]
@@ -147,6 +160,12 @@ export class Modals {
       frame.add(row)
       return {
         frame,
+        hints: [
+          { keys: '←→', action: 'choose', priority: 1 },
+          { keys: 'Enter', action: 'select', priority: 0 },
+          { keys: 'y', action: action.toLowerCase(), priority: 2 },
+          { keys: 'n/Esc', action: 'cancel', priority: 0 },
+        ],
         onKey: key => {
           key.preventDefault()
           if (!plain(key)) return
@@ -162,7 +181,7 @@ export class Modals {
   /** Asks for one line of text; null if cancelled. */
   prompt({ title, label, value = '', placeholder, action = 'save', validate }: PromptOptions): Promise<string | null> {
     return this.present<string | null>(null, finish => {
-      const frame = this.frame(title, `Enter ${action} · Esc cancel`)
+      const frame = this.frame(title)
       if (label) frame.add(this.text(label, { marginBottom: 1 }))
       const input = new InputRenderable(this.renderer, {
         value, placeholder, width: '100%', flexShrink: 0,
@@ -180,6 +199,7 @@ export class Modals {
       frame.add(problem)
       return {
         frame,
+        hints: [{ keys: 'Enter', action, priority: 0 }, { keys: 'Esc', action: 'cancel', priority: 0 }],
         focus: input,
         // Everything but Esc reaches the focused input.
         onKey: key => {
@@ -221,6 +241,7 @@ export class Modals {
     this.backdrop.visible = true
     this.current = modal
     modal.focus?.focus()
+    this.onChange()
   }
 
   private unmount(frame: BoxRenderable): void {
@@ -230,6 +251,7 @@ export class Modals {
     this.dismantle(current)
     this.backdrop.visible = false
     if (current.restore && !current.restore.isDestroyed) current.restore.focus()
+    this.onChange()
   }
 
   private dismantle(modal: MountedModal): void {
@@ -242,12 +264,16 @@ export class Modals {
     return new TextRenderable(this.renderer, { content, wrapMode: 'word', fg: COLORS.text, ...options })
   }
 
-  private frame(title: string, hints: string, width = DEFAULT_WIDTH): BoxRenderable {
+  private frame(title: string, width = DEFAULT_WIDTH): BoxRenderable {
     return new BoxRenderable(this.renderer, {
       width, maxWidth: '90%', maxHeight: '90%', flexDirection: 'column', paddingX: 1,
       border: true, borderStyle: 'rounded', borderColor: COLORS.accent, backgroundColor: COLORS.surface,
-      title: ` ${title} `, titleColor: COLORS.accent, bottomTitle: ` ${hints} `, bottomTitleAlignment: 'right',
+      title: ` ${title} `, titleColor: COLORS.accent,
     })
+  }
+
+  private innerHeight(): number {
+    return Math.max(1, Math.floor(this.renderer.height * 0.9) - FRAME_ROWS)
   }
 
   private innerWidth(width: number): number {

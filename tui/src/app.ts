@@ -4,14 +4,14 @@ import type { LiveEvent } from '../../src/shared/live-events'
 import { ConversationSession } from '../../src/client/lib/conversation-session'
 import { errorMessage } from '../../src/client/lib/errors'
 import { IDLE_MS, TerminalAttention } from '../../src/cli/attention'
-import type { ConnectionEpoch, IdentitySession } from './identity-session'
+import type { ConnectionEpoch, IdentitySession, LiveStatus } from './identity-session'
 import { Commands, classifyInput } from './commands'
 import { HELP_MODAL } from './help'
 import { Composer } from './composer'
 import { mountLayout } from './layout'
 import { Sidebar, type ConversationEntry } from './sidebar'
-import { Footer } from './footer'
-import { createHeader } from './header'
+import { COMPOSER_HINTS, HintBar, LIST_HINTS, UNFOCUSED_HINTS } from './hints'
+import { StatusBar } from './status-bar'
 import { Modals } from './modals'
 import { Toasts, type ToastKind } from './toasts'
 import { Transcript } from './transcript'
@@ -32,7 +32,8 @@ export interface AppOptions {
  * nor suppresses push notifications.
  */
 export class App {
-  private readonly footer: Footer
+  private readonly statusBar: StatusBar
+  private readonly hintBar: HintBar
   private readonly sidebar: Sidebar
   private readonly transcript: Transcript
   private readonly composer: Composer
@@ -46,8 +47,7 @@ export class App {
   private partner: Address | null = null
   private epoch: ConnectionEpoch | null = null
   private readonly attention: TerminalAttention
-  private connected = false
-  private status = 'Connecting…'
+  private live: LiveStatus = { state: 'connecting' }
   private ttl: number
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private readonly tick: ReturnType<typeof setInterval>
@@ -65,12 +65,15 @@ export class App {
     this.sidebar = new Sidebar(renderer, address => this.open(address))
     this.transcript = new Transcript(renderer, identity.address)
     this.composer = new Composer(renderer, () => this.submit())
-    this.footer = new Footer(renderer)
+    this.statusBar = new StatusBar(renderer, identity.address, options.server)
+    this.hintBar = new HintBar(renderer)
     const root = mountLayout(renderer, {
-      header: createHeader(renderer, identity.address, options.server), sidebar: this.sidebar.view, pane: this.transcript.view,
-      composer: this.composer.view, footer: this.footer.view,
+      header: this.statusBar.view, sidebar: this.sidebar.view, pane: this.transcript.view,
+      composer: this.composer.view, footer: this.hintBar.view,
     }, () => this.attention.input())
-    this.modals = new Modals(renderer, root)
+    this.modals = new Modals(renderer, root, () => this.renderHints())
+    this.composer.onFocusChange(() => this.renderHints())
+    this.sidebar.onFocusChange(() => this.renderHints())
     this.toasts = new Toasts(renderer, root)
     this.commands = new Commands({
       address: identity.address,
@@ -89,9 +92,10 @@ export class App {
     renderer.keyInput.on('paste', this.onPaste)
     renderer.on('focus', this.onFocus)
     renderer.on('blur', this.onBlur)
+    renderer.on('resize', this.onResize)
     // Signals destroy the renderer without asking; stop the same way as /quit.
     renderer.once('destroy', () => this.stop())
-    this.tick = setInterval(() => this.renderMessages(), 1000)
+    this.tick = setInterval(() => { this.renderStatus(); this.renderMessages() }, 1000)
 
     this.composer.focus()
     this.render()
@@ -105,12 +109,11 @@ export class App {
       event: event => this.liveEvent(event),
       connection: epoch => {
         this.epoch = epoch
-        this.connected = epoch !== null
         this.session?.connectionChanged(epoch)
         if (epoch) void this.refreshConversations()
         this.render()
       },
-      status: text => { this.status = text; this.render() },
+      status: live => { this.live = live; this.renderStatus() },
     }).catch(error => {
       if (!this.identity.signal.aborted) this.toast(errorMessage(error, 'Live connection failed'), 'error')
     })
@@ -135,6 +138,7 @@ export class App {
     this.renderer.keyInput.off('paste', this.onPaste)
     this.renderer.off('focus', this.onFocus)
     this.renderer.off('blur', this.onBlur)
+    this.renderer.off('resize', this.onResize)
     this.renderer.destroy()
     this.resolveDone()
   }
@@ -142,6 +146,7 @@ export class App {
   private readonly onFocus = () => this.attention.focus()
   private readonly onBlur = () => this.attention.blur()
   private readonly onPaste = () => this.attention.input()
+  private readonly onResize = () => { this.renderStatus(); this.renderHints() }
 
   private attentionChanged(attentive: boolean): void {
     this.identity.setAttention(attentive)
@@ -258,12 +263,26 @@ export class App {
 
   private render(): void {
     if (this.stopped) return
-    this.footer.render({ connected: this.connected, status: this.status, ttl: this.ttl, attentive: this.attention.attentive })
+    this.renderStatus()
+    this.renderHints()
     this.renderList()
     this.transcript.renderPane({
       partner: this.partner, snapshot: this.session?.snapshot() ?? null, attentive: this.attention.attentive,
     })
     this.renderMessages()
+  }
+
+  private renderStatus(): void {
+    if (this.stopped) return
+    this.statusBar.render({ live: this.live, ttl: this.ttl, attentive: this.attention.attentive, now: Date.now() })
+  }
+
+  /** The keys of the open modal, else of whatever has focus. */
+  private renderHints(): void {
+    if (this.stopped) return
+    const hints = this.modals.hints
+      ?? (this.sidebar.focused ? LIST_HINTS : this.composer.focused ? COMPOSER_HINTS : UNFOCUSED_HINTS)
+    this.hintBar.render(hints)
   }
 
   private renderList(): void {
