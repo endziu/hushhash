@@ -4,6 +4,7 @@ import { terminalText } from '../../src/cli/terminal-text'
 import { HELP_MODAL } from './help'
 import { LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './lifetime'
 import type { ConfirmOptions, ModalOptions } from './modals'
+import { THEME_SETTINGS, parseThemeSetting, type ThemeSetting } from './theme'
 import type { ToastKind } from './toasts'
 
 export type ComposerInput =
@@ -38,6 +39,8 @@ export interface CommandHost {
   session(): CommandSession | null
   ttl(): number
   setTtl(seconds: number): void
+  theme(): ThemeSetting
+  setTheme(setting: ThemeSetting): void
   open(address: Address): void
   toast(text: string, kind?: ToastKind): void
   modal(options: ModalOptions): Promise<void>
@@ -69,6 +72,15 @@ export class Commands {
         if (seconds === null) { host.toast(`Choose a lifetime: ${LIFETIME_CHOICES_TEXT}`, 'error'); return true }
         host.setTtl(seconds)
         host.toast(`New messages disappear ${lifetimeLabel(seconds)} after they are opened`, 'success')
+        return true
+      }
+      case '/theme': {
+        const choices = THEME_SETTINGS.join(', ')
+        if (!arg) { host.toast(`Theme ${host.theme()}. Choose: ${choices}`); return true }
+        const setting = parseThemeSetting(arg)
+        if (!setting) { host.toast(`Choose a theme: ${choices}`, 'error'); return true }
+        host.setTheme(setting)
+        host.toast(setting === 'system' ? 'Theme follows the terminal' : `Theme ${setting}`, 'success')
         return true
       }
       case '/clear':

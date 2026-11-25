@@ -3,6 +3,7 @@ import { generateKeypair } from '../../src/shared/keypair'
 import { Commands, classifyInput, type CommandHost, type CommandSession } from './commands'
 import { HELP_MODAL } from './help'
 import type { ModalOptions } from './modals'
+import type { ThemeSetting } from './theme'
 import type { ToastKind } from './toasts'
 
 function fakeSession(): CommandSession & { cleared: number; retried: string[] } {
@@ -20,6 +21,7 @@ function fakeSession(): CommandSession & { cleared: number; retried: string[] } 
 function fakeHost(session: CommandSession | null = fakeSession()) {
   const state = {
     ttl: 1800,
+    theme: 'system' as ThemeSetting,
     toasts: [] as { text: string; kind: ToastKind }[],
     modals: [] as ModalOptions[],
     confirmAnswer: true,
@@ -32,6 +34,8 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     session: () => session,
     ttl: () => state.ttl,
     setTtl: seconds => { state.ttl = seconds },
+    theme: () => state.theme,
+    setTheme: setting => { state.theme = setting },
     open: address => { state.opened.push(address) },
     toast: (text, kind = 'info') => { state.toasts.push({ text, kind }) },
     modal: async options => { state.modals.push(options) },
@@ -63,6 +67,19 @@ test('/ttl shows, validates and sets the lifetime', () => {
   commands.run('/ttl 5m')
   expect(state.ttl).toBe(300)
   expect(state.toasts.at(-1)?.kind).toBe('success')
+})
+
+test('/theme shows, validates and sets the theme', () => {
+  const { host, state } = fakeHost()
+  const commands = new Commands(host)
+  commands.run('/theme')
+  expect(state.toasts.at(-1)).toEqual({ text: 'Theme system. Choose: system, light, dark', kind: 'info' })
+  commands.run('/theme sepia')
+  expect(state.toasts.at(-1)?.kind).toBe('error')
+  expect(state.theme).toBe('system')
+  commands.run('/theme light')
+  expect(state.theme).toBe('light')
+  expect(state.toasts.at(-1)).toEqual({ text: 'Theme light', kind: 'success' })
 })
 
 test('an unknown command reports false so its text can be kept', () => {
