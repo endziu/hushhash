@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
-import { listItemAt, parseLifetime } from './app'
+import { parseLifetime } from './lifetime'
+import { listItemAt } from './sidebar'
 
 test('parses lifetimes as seconds or labels', () => {
   expect(parseLifetime('300')).toBe(300)
