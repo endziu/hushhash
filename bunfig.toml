@@ -1,0 +1,3 @@
+[test]
+# tui/ is a separate package with its own dependencies and tests (cd tui && bun test).
+pathIgnorePatterns = ["tui/**"]

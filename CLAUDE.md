@@ -11,6 +11,10 @@ Commands, environment variables, rate limits, and retention rules are in the REA
   and builds first, so it is slow but is the real check.
 - Four tsconfigs: `tsconfig.client.json`, `tsconfig.server.json`, `tsconfig.cli.json`, and the root
   `tsconfig.json`. `bun run typecheck` covers the first three. Client code is Preact, not React.
+- `tui/` is a separate package (OpenTUI terminal client) with its own `package.json`, lockfile and
+  checks: `cd tui && bun install && bun run typecheck && bun run lint && bun run test`. It imports
+  `src/shared`, `src/cli` and browser `src/client/lib` modules, so run its checks after changing those.
+  Root `bun test` ignores `tui/` (see `bunfig.toml`).
 
 ## Agent skills
 
