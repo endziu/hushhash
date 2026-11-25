@@ -1,14 +1,11 @@
 import { useEffect, useState, useRef } from 'preact/hooks'
 import { isWindowAttentive } from '../lib/window-attention'
 import { api } from '../lib/api'
+import { AttentionReporter } from '../lib/attention-reporter'
 import { SseConnection, type ConnectionEpoch } from '../lib/sse-connection'
 import type { LiveEvent } from '../../shared/live-events'
 
 export interface LiveConnection { current: ConnectionEpoch | null }
-
-// Push suppression lapses 45 s after the last report of an attentive stream.
-const ATTENTION_HEARTBEAT_MS = 20_000
-const ATTENTION_SETTLE_MS = 300
 
 /** `onConnectionChange` hears each change of `connection.current` as it happens, before Preact renders. */
 export function useSSE(token: string | null, onEvent: (event: LiveEvent) => void, onConnectionChange: (connection: ConnectionEpoch | null) => void) {
@@ -24,29 +21,12 @@ export function useSSE(token: string | null, onEvent: (event: LiveEvent) => void
     const activeToken: string = token
 
     // The server only needs attention changes, plus a heartbeat while
-    // attentive to outlive its TTL. Focus flips constantly on
-    // focus-follows-pointer desktops, so changes are reported once settled.
-    let streamToken: string | null = null
-    let attentionSequence = 0
-    let reported: boolean | null = null
+    // attentive to outlive its TTL; the reporter settles focus flips first.
+    const attention = new AttentionReporter(
+      (stream, attentive, sequence) => api.setSseAttention(activeToken, stream, attentive, sequence),
+      isWindowAttentive,
+    )
     let dialedAttention = false
-    let settle: ReturnType<typeof setTimeout> | undefined
-    const sendAttention = (attentive: boolean) => {
-      if (!streamToken) return
-      const stream = streamToken
-      reported = attentive
-      void api.setSseAttention(activeToken, stream, attentive, ++attentionSequence).catch(() => {
-        // Unknown to the server now; the next change or heartbeat resends.
-        if (streamToken === stream && reported === attentive) reported = null
-      })
-    }
-    const reportAttention = () => {
-      clearTimeout(settle)
-      settle = setTimeout(() => {
-        const attentive = isWindowAttentive()
-        if (attentive !== reported) sendAttention(attentive)
-      }, ATTENTION_SETTLE_MS)
-    }
     // EventSource alone cannot recover: a non-2xx response (cap 429, stale
     // token 401) ends it permanently, and its automatic retry of a dropped
     // stream re-dials a single-use token that now 401s. SseConnection drives
@@ -58,18 +38,13 @@ export function useSSE(token: string | null, onEvent: (event: LiveEvent) => void
         return `/api/events?token=${sseToken}&attentive=${dialedAttention}`
       },
       onOpen: (sseToken) => {
-        streamToken = sseToken
-        attentionSequence = 0
-        // The URL already told the server; report only a change since dialing.
-        reported = dialedAttention
-        reportAttention()
+        attention.opened(sseToken, dialedAttention)
         connection.current = Symbol('SSE connection')
         onConnectionChange(connection.current)
         setConnected(connection.current)
       },
       onDisconnect: () => {
-        streamToken = null
-        reported = null
+        attention.closed()
         connection.current = null
         onConnectionChange(null)
         setConnected(null)
@@ -78,25 +53,19 @@ export function useSSE(token: string | null, onEvent: (event: LiveEvent) => void
     })
     const update = () => {
       conn.setActive(document.visibilityState === 'visible')
-      reportAttention()
+      attention.changed()
     }
     document.addEventListener('visibilitychange', update)
     window.addEventListener('focus', update)
     window.addEventListener('blur', update)
     update()
     if (document.visibilityState === 'visible') conn.connect()
-    const heartbeat = setInterval(() => {
-      const attentive = isWindowAttentive()
-      if (attentive || attentive !== reported) sendAttention(attentive)
-    }, ATTENTION_HEARTBEAT_MS)
 
     return () => {
       document.removeEventListener('visibilitychange', update)
       window.removeEventListener('focus', update)
       window.removeEventListener('blur', update)
-      clearInterval(heartbeat)
-      clearTimeout(settle)
-      streamToken = null
+      attention.dispose()
       connection.current = null
       conn.close()
       onConnectionChange(null)

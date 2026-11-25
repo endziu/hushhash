@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { createCliRenderer } from '@opentui/core'
 import { requireAddress } from '../../src/shared/address'
-import { serverOrigin } from '../../src/cli/client'
-import { loadIdentity } from '../../src/cli/identity'
-import { IdentitySession, ClientUpdateRequiredError } from './identity-session'
-import { App, DEFAULT_LIFETIME, lifetimeLabel, parseLifetime } from './app'
-import { safeText } from './text'
+import { ClientUpdateRequiredError, serverOrigin } from '../../src/cli/client'
+import { DEFAULT_IDENTITY_HELP, defaultIdentityPath, loadIdentity } from '../../src/cli/identity'
+import { terminalText } from '../../src/cli/terminal-text'
+import { FALLBACK_MESSAGE_LIFETIME } from '../../src/client/lib/message-lifetime'
+import { IdentitySession } from './identity-session'
+import { App, LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './app'
 
 const HELP = `hushhash TUI — full-screen encrypted chat with a hushhash server
 
@@ -19,14 +19,17 @@ Usage: bun run start [options] [ADDRESS]
 Options:
   --server ORIGIN          prod, local, or an explicit origin (HTTPS remotely)
                            Default: HUSHHASH_SERVER or local (http://localhost:3000)
-  --identity FILE          Default: HUSHHASH_IDENTITY or ~/.config/hushhash/identity.json
-  --ttl LIFETIME           Lifetime of sent messages, such as 5m or 300 (default: ${lifetimeLabel(DEFAULT_LIFETIME)})
+  --identity FILE          Default: ${DEFAULT_IDENTITY_HELP}
+  --ttl LIFETIME           Lifetime of sent messages, such as 5m or 300 (default: ${lifetimeLabel(FALLBACK_MESSAGE_LIFETIME)})
   --help                   Show this help
 
 The TUI uses the same identity file as the CLI. Create one with
   bun run cli --server prod init
 from the repository root.
 `
+
+// The CLI's ClientUpdateRequiredError advice, for this package's two installs.
+const OUTDATED = 'This hushhash TUI is out of date for this server. Run git pull, then bun install in the repository and in tui/.'
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
@@ -35,12 +38,11 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (values.help) { console.log(HELP); return }
   if (positionals.length > 1) throw new Error('Expected at most one ADDRESS')
   const partner = positionals[0] === undefined ? undefined : requireAddress(positionals[0])
-  const ttl = values.ttl === undefined ? DEFAULT_LIFETIME : parseLifetime(values.ttl)
-  if (ttl === null) throw new Error('Unsupported --ttl; use 5s, 10s, 30s, 1m, 5m, 30m, 1h, 6h or 24h')
+  const ttl = values.ttl === undefined ? FALLBACK_MESSAGE_LIFETIME : parseLifetime(values.ttl)
+  if (ttl === null) throw new Error(`Unsupported --ttl; use one of ${LIFETIME_CHOICES_TEXT}`)
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The TUI needs an interactive terminal; use the CLI for scripts')
   const server = serverOrigin(values.server ?? process.env.HUSHHASH_SERVER ?? 'local')
-  const identityPath = resolve(values.identity ?? process.env.HUSHHASH_IDENTITY
-    ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'hushhash', 'identity.json'))
+  const identityPath = resolve(values.identity ?? defaultIdentityPath())
   let identity
   try { identity = await loadIdentity(identityPath) }
   catch (error) {
@@ -55,7 +57,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     // Fail before taking over the screen, so connection errors stay readable.
     await identitySession.login().catch(cause => {
       throw identitySession.signal.reason instanceof ClientUpdateRequiredError
-        ? identitySession.signal.reason
+        ? new Error(OUTDATED)
         : new Error(`Cannot sign in to ${server}: ${cause instanceof Error ? cause.message : 'unknown error'}`)
     })
     const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
@@ -65,12 +67,12 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   } finally {
     await identitySession.close().catch(() => console.error('Session cleanup failed; it will expire automatically.'))
   }
-  if (identitySession.signal.reason instanceof ClientUpdateRequiredError) throw identitySession.signal.reason
+  if (identitySession.signal.reason instanceof ClientUpdateRequiredError) throw new Error(OUTDATED)
 }
 
 if (import.meta.main) {
   main().catch(error => {
-    console.error(`hushhash-tui: ${safeText(error instanceof Error ? error.message : 'Unknown error')}`)
+    console.error(`hushhash-tui: ${terminalText(error instanceof Error ? error.message : 'Unknown error')}`)
     process.exitCode = 1
   })
 }

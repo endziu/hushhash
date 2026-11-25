@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ChatClient, serverOrigin } from './client'
 import { createIdentity, loadIdentity, parsePrivateKey } from './identity'
-import { terminalText } from './main'
 import { decrypt } from '../shared/crypto'
 import { createSignedMessageEnvelope } from '../shared/signed-message-envelope'
 import { canonicalMessageAad, verifyDeliveredMessage } from '../shared/message-envelope'
@@ -73,11 +72,6 @@ describe('local identity and input boundaries', () => {
     expect((await run('address')).stdout.trim()).toBe(checksumAddress(saved.address))
     expect((await run('register')).stderr).toContain(`Cannot connect to ${origin}`)
     expect(await loadIdentity(identityPath)).toEqual(saved)
-  })
-
-  test('neutralizes terminal escapes, line injection and bidi controls', () => {
-    expect(terminalText('\x1b]52;c;secret\x07\npeer:\u202etest')).toBe('\\u001b]52;c;secret\\u0007 ↵ peer:\\u202etest')
-    expect(terminalText('hello 😛')).toBe('hello 😛')
   })
 
   test('refuses substituted registration/login challenges and mismatched public keys', async () => {

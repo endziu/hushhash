@@ -2,7 +2,7 @@ import type { Address } from '../shared/address'
 import type { Keypair } from '../shared/keypair'
 import { CLIENT_UPDATE_REQUIRED_CODE } from '../shared/api-error'
 import { parseDeliveryLifecycle, type ConfirmationKind, type ExpiryUpdate, type MessageLifecycle } from '../shared/message-envelope'
-import { AttentionReporter } from './attention'
+import { AttentionReporter } from '../client/lib/attention-reporter'
 import { ApiError, confirmMessage, ProtocolClient, readApiError, sealMessage, unsealMessage, type ConfirmationResponse, type Conversation, type DecryptedMessage } from '../shared/protocol-client'
 
 interface Confirmation {
@@ -15,6 +15,10 @@ const CONFIRMATIONS: Record<'open' | 'state', Confirmation> = {
   open: { kind: 'opening', operation: 'opening', request: (api, partner, ids, token) => api.open(partner, ids, token) },
   state: { kind: 'availability', operation: 'availability check', request: (api, partner, ids, token) => api.states(partner, ids, token) },
 }
+
+// The server pings every 30 s; a silent stream is dead.
+const READ_TIMEOUT_MS = 65_000
+const MAX_FRAME_BYTES = 4_100_000
 
 const availabilityDeadline = Symbol('availabilityDeadline')
 export interface PlainMessage extends MessageLifecycle {
@@ -87,7 +91,7 @@ export class ClientUpdateRequiredError extends Error {
 
 export class ChatClient {
   readonly origin: string
-  private readonly api: ProtocolClient
+  protected readonly api: ProtocolClient
   private token: string | null = null
   private loginPending: Promise<void> | null = null
   private readonly controller = new AbortController()
@@ -97,6 +101,7 @@ export class ChatClient {
   private requestSignal: AbortSignal | undefined = this.signal
   /** Set once this client reports attention; until then its live streams never suppress push. */
   private attention: AttentionReporter | null = null
+  private attentive = false
 
   constructor(origin: string, readonly identity: Keypair) {
     this.origin = serverOrigin(origin)
@@ -118,10 +123,11 @@ export class ChatClient {
    * Without it (watch, scripts), live streams never suppress push.
    */
   setAttention(attentive: boolean): void {
-    if (this.attention) { this.attention.set(attentive); return }
+    this.attentive = attentive
+    if (this.attention) { this.attention.changed(); return }
     this.attention = new AttentionReporter((stream, attentive, sequence) => this.authenticated(token => this.api.request('/api/events/attention', {
       method: 'POST', body: { stream, attentive, sequence }, token,
-    })), attentive)
+    })), () => this.attentive)
     const attention = this.attention
     this.signal.addEventListener('abort', () => attention.dispose(), { once: true })
   }
@@ -140,7 +146,7 @@ export class ChatClient {
   }
 
   /** Runs an authenticated request, signing in first and once more if the session has expired. */
-  private async authenticated<T>(request: (token: string) => Promise<T>): Promise<T> {
+  protected async authenticated<T>(request: (token: string) => Promise<T>): Promise<T> {
     if (!this.token) await this.login()
     try {
       return await request(this.token!)
@@ -305,10 +311,11 @@ export class ChatClient {
     } while (true)
   }
 
-  async *events(signal: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
+  /** Yields the frames of one live event stream; `onOpen` runs once the server accepts it. */
+  async *events(signal: AbortSignal, onOpen?: () => void): AsyncGenerator<{ event: string; data: string }> {
     const sseToken = await this.authenticated(token => this.api.sseToken(token))
     const controller = new AbortController()
-    const dialed = this.attention?.attentive ?? false
+    const dialed = this.attention !== null && this.attentive
     const connectTimer = setTimeout(() => controller.abort(), 15_000)
     let response: Response
     try {
@@ -324,12 +331,13 @@ export class ChatClient {
       throw new Error(`Live connection failed: HTTP ${response.status}`)
     }
     this.attention?.opened(sseToken, dialed)
+    onOpen?.()
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     try {
       while (true) {
-        const timer = setTimeout(() => controller.abort(), 65_000)
+        const timer = setTimeout(() => controller.abort(), READ_TIMEOUT_MS)
         let result: Awaited<ReturnType<typeof reader.read>>
         try { result = await reader.read() } finally { clearTimeout(timer) }
         if (result.done) return
@@ -345,7 +353,7 @@ export class ChatClient {
             data: lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'),
           }
         }
-        if (buffer.length > 4_100_000) throw new Error('Live event exceeds message size limit')
+        if (buffer.length > MAX_FRAME_BYTES) throw new Error('Live event exceeds message size limit')
       }
     } finally {
       this.attention?.closed()
