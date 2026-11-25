@@ -1,5 +1,5 @@
 import {
-  BoxRenderable, SelectRenderable, SelectRenderableEvents, type CliRenderer, type OptimizedBuffer, type SelectRenderableOptions,
+  BoxRenderable, SelectRenderable, SelectRenderableEvents, type CliRenderer, type OptimizedBuffer,
 } from '@opentui/core'
 import { parseAddress, shortAddress, type Address } from '../../src/shared/address'
 import { fmtDay, fmtTime } from '../../src/client/lib/display'
@@ -12,7 +12,10 @@ export interface ConversationEntry {
   last_message_at: number | null
 }
 
-/** The narrowest and widest the sidebar gets, borders included. */
+/**
+ * The narrowest and widest the sidebar gets, borders included. 24, not less:
+ * the avatar, the unread mark and a short address need that.
+ */
 export const SIDEBAR_MIN_WIDTH = 24
 export const SIDEBAR_MAX_WIDTH = 36
 
@@ -24,32 +27,32 @@ export function sidebarWidth(columns: number): number {
 // Each conversation in the list takes two rows: the address and its last activity.
 const LIST_ROWS_PER_ITEM = 2
 
+/** How many items fit in `height` rows. */
+function visibleItems(height: number): number {
+  return Math.max(1, Math.floor(height / LIST_ROWS_PER_ITEM))
+}
+
 /**
  * The first item drawn, mirroring how OpenTUI's Select scrolls: it keeps the
  * selected item centred where it can. Keep the two in step.
  */
 function listOffset(height: number, count: number, selected: number): number {
-  const visible = Math.max(1, Math.floor(height / LIST_ROWS_PER_ITEM))
+  const visible = visibleItems(height)
   return Math.max(0, Math.min(selected - Math.floor(visible / 2), count - visible))
 }
 
 /** The list item drawn on `row` (0 is the list's top row), or null for the empty space below the last item. */
 export function listItemAt(row: number, height: number, count: number, selected: number): number | null {
-  const visible = Math.max(1, Math.floor(height / LIST_ROWS_PER_ITEM))
   const slot = Math.floor(row / LIST_ROWS_PER_ITEM)
-  if (row < 0 || slot >= visible) return null
+  if (row < 0 || slot >= visibleItems(height)) return null
   const index = listOffset(height, count, selected) + slot
   return index < count ? index : null
 }
 
 /** A Select that draws each conversation's avatar left of its two rows. */
 class ConversationSelect extends SelectRenderable {
-  /** Whether names leave room for avatars, set before the options. */
-  avatars = true
-
-  constructor(renderer: CliRenderer, options: SelectRenderableOptions) {
-    super(renderer, options)
-  }
+  /** Whether names leave room for avatars; set with the options, so nothing is drawn before them. */
+  avatars = false
 
   protected override renderSelf(buffer: OptimizedBuffer, deltaTime: number): void {
     super.renderSelf(buffer, deltaTime)

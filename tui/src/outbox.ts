@@ -10,6 +10,8 @@ interface Entry {
   /** The server's copy once accepted; it is shown until the conversation has it too. */
   delivered: DeliveredMessage | null
   failed: boolean
+  /** A failed message's text went back to the composer. */
+  restored: boolean
 }
 
 /**
@@ -28,7 +30,7 @@ export class Outbox {
   /** Adds a message being sent at `now`; returns its key. */
   add(plaintext: string, now: number): string {
     const key = `outgoing:${this.next++}`
-    this.entries.push({ key, plaintext, created_at: now, delivered: null, failed: false })
+    this.entries.push({ key, plaintext, created_at: now, delivered: null, failed: false, restored: false })
     return key
   }
 
@@ -37,9 +39,10 @@ export class Outbox {
     if (entry) { entry.delivered = message; entry.key = message.id }
   }
 
-  failed(key: string): void {
+  /** The message was not sent; `restored` if its text went back to the composer. */
+  failed(key: string, restored: boolean): void {
     const entry = this.entries.find(candidate => candidate.key === key)
-    if (entry) entry.failed = true
+    if (entry) { entry.failed = true; entry.restored = restored }
   }
 
   /** Forgets failed messages, as sending another does. */
@@ -63,7 +66,7 @@ export class Outbox {
       ...messages.map(delivered),
       ...this.entries.map((entry): ShownMessage => entry.delivered ? delivered({ ...entry.delivered, plaintext: entry.plaintext }) : {
         key: entry.key, sender: this.self, plaintext: entry.plaintext, created_at: entry.created_at,
-        opened_at: null, expires_at: null, outgoing: entry.failed ? 'failed' : 'sending',
+        opened_at: null, expires_at: null, outgoing: entry.failed ? 'failed' : 'sending', restored: entry.restored,
       }),
     ]
   }

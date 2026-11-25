@@ -42,7 +42,7 @@ export class Layout {
     this.root.add(body)
     this.root.add(parts.hintBar)
     renderer.root.add(this.root)
-    this.apply()
+    this.fitToTerminal()
   }
 
   /** Too narrow for a sidebar. */
@@ -63,17 +63,17 @@ export class Layout {
   /** Hides or shows the sidebar; in a narrow terminal it is always hidden. */
   toggleSidebar(): void {
     this.hidden = !this.hidden
-    this.apply()
+    this.fitToTerminal()
   }
 
   /** Which screen a collapsed layout shows: the list, or the conversation. */
   showList(list: boolean): void {
     this.listScreen = list
-    this.apply()
+    this.fitToTerminal()
   }
 
   /** Fits the parts to the terminal's size; for after a resize. */
-  apply(): void {
+  fitToTerminal(): void {
     const { sidebar } = this.parts
     if (!this.collapsed) {
       sidebar.width = sidebarWidth(this.renderer.width)

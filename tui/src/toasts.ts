@@ -5,7 +5,7 @@ export type ToastKind = 'info' | 'success' | 'error'
 
 const DURATION_MS: Record<ToastKind, number> = { info: 4000, success: 4000, error: 8000 }
 const MAX_TOASTS = 4
-// Functions, so a toast takes the palette in use when it shows.
+// Functions, so a toast takes the palette in use.
 const STYLE: Record<ToastKind, { color: () => string; icon: string }> = {
   info: { color: () => COLORS.accent, icon: 'ℹ' },
   success: { color: () => COLORS.ok, icon: '✓' },
@@ -20,6 +20,8 @@ const STYLE: Record<ToastKind, { color: () => string; icon: string }> = {
 export class Toasts {
   private readonly stack: BoxRenderable
   private readonly timers = new Map<BoxRenderable, ReturnType<typeof setTimeout>>()
+  /** Repaints each toast on screen with the palette in use. */
+  private readonly painters = new Map<BoxRenderable, () => void>()
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -34,17 +36,24 @@ export class Toasts {
   }
 
   show(text: string, kind: ToastKind = 'info'): void {
-    const icon = STYLE[kind].icon
-    const color = STYLE[kind].color()
     const toast = new BoxRenderable(this.renderer, {
-      maxWidth: 60, paddingX: 1, flexShrink: 0,
-      border: true, borderStyle: 'rounded', borderColor: color, backgroundColor: COLORS.surface,
+      maxWidth: 60, paddingX: 1, flexShrink: 0, border: true, borderStyle: 'rounded',
       onMouseDown: event => {
         event.preventDefault()
         this.dismiss(toast)
       },
     })
-    toast.add(new TextRenderable(this.renderer, { content: t`${fg(color)(icon)} ${text}`, wrapMode: 'word', fg: COLORS.text }))
+    const body = new TextRenderable(this.renderer, { content: '', wrapMode: 'word' })
+    const paint = () => {
+      const { color, icon } = STYLE[kind]
+      toast.borderColor = color()
+      toast.backgroundColor = COLORS.surface
+      body.fg = COLORS.text
+      body.content = t`${fg(color())(icon)} ${text}`
+    }
+    paint()
+    toast.add(body)
+    this.painters.set(toast, paint)
     this.stack.add(toast)
     this.timers.set(toast, setTimeout(() => this.dismiss(toast), this.duration(kind)))
     while (this.timers.size > MAX_TOASTS) this.dismiss(this.timers.keys().next().value!)
@@ -55,8 +64,14 @@ export class Toasts {
     if (timer === undefined) return
     clearTimeout(timer)
     this.timers.delete(toast)
+    this.painters.delete(toast)
     this.stack.remove(toast)
     toast.destroyRecursively()
+  }
+
+  /** Repaints the toasts on screen with the current palette. */
+  applyTheme(): void {
+    for (const paint of this.painters.values()) paint()
   }
 
   /** Stops every timer; for shutting down. */

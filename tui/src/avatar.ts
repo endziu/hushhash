@@ -51,30 +51,30 @@ export function canDrawAvatars(capabilities: TerminalCapabilities | null): boole
 
 const UPPER_HALF = '▀'
 
-/**
- * The avatar's two rows of cells as styled text: each cell's top half is one
- * tile and its bottom half the tile below.
- */
-export function avatarRows(grid: AvatarGrid): StyledText[] {
-  const rows: StyledText[] = []
-  for (let row = 0; row < AVATAR_TILES; row += 2) {
-    rows.push(new StyledText(grid[row]!.map((top, column): TextChunk => ({
-      __isChunk: true, text: UPPER_HALF, fg: RGBA.fromHex(top), bg: RGBA.fromHex(grid[row + 1]![column]!),
-    }))))
-  }
-  return rows
+/** Cell row `row` of the avatar: each cell's top half is one tile and its bottom half the tile below. */
+function avatarRow(grid: AvatarGrid, row: number): TextChunk[] {
+  return grid[row * 2]!.map((top, column): TextChunk => ({
+    __isChunk: true, text: UPPER_HALF, fg: RGBA.fromHex(top), bg: RGBA.fromHex(grid[row * 2 + 1]![column]!),
+  }))
 }
 
-/** One row: the avatar's top half, for a one-line bar. */
+/** The avatar's two rows of cells as styled text. */
+export function avatarRows(grid: AvatarGrid): StyledText[] {
+  return Array.from({ length: AVATAR_TILES / 2 }, (_, row) => new StyledText(avatarRow(grid, row)))
+}
+
+/**
+ * The avatar's top half, for a one-line bar. A cell shows at most two
+ * colours, so one row cannot hold all four rows of tiles; it shows the top
+ * of the same picture the list and header show whole.
+ */
 export function avatarLine(grid: AvatarGrid): StyledText {
-  return avatarRows(grid)[0]!
+  return new StyledText(avatarRow(grid, 0))
 }
 
 /** Draws the whole avatar at (`x`, `y`), two rows tall. */
 export function drawAvatar(buffer: OptimizedBuffer, grid: AvatarGrid, x: number, y: number): void {
-  for (let row = 0; row < AVATAR_TILES; row += 2) {
-    for (let column = 0; column < AVATAR_TILES; column++) {
-      buffer.setCell(x + column, y + row / 2, UPPER_HALF, RGBA.fromHex(grid[row]![column]!), RGBA.fromHex(grid[row + 1]![column]!))
-    }
+  for (let row = 0; row < AVATAR_TILES / 2; row++) {
+    avatarRow(grid, row).forEach((cell, column) => buffer.setCell(x + column, y + row, cell.text, cell.fg!, cell.bg!))
   }
 }

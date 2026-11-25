@@ -380,7 +380,7 @@ test('an unregistered partner is reported and a failed send keeps its text', asy
   setup.mockInput.pressEnter()
   await until(() => frame().includes('Send failed'), 'send failure')
   expect(frame()).toContain('nobody home')
-  await until(() => /nobody home\s+not sent ✗/.test(frame()), 'failed state on the message')
+  await until(() => /nobody home\s+not sent · Enter resends ✗/.test(frame()), 'failed state on the message')
 })
 
 test('clicking a conversation in the list opens it', async () => {
@@ -491,6 +491,30 @@ test('a divider marks what arrived while you were elsewhere, until you send', as
   }
 })
 
+test('the divider still shows when the local clock is behind the server', async () => {
+  const carol = new ChatClient(server.url.origin, generateKeypair())
+  await carol.login()
+  const realNow = Date.now.bind(Date)
+  let behind: ReturnType<typeof spyOn> | undefined
+  try {
+    await start(carol.identity.address)
+    await until(() => !frame().includes('Loading…'), 'carol synchronized')
+    await alice.send(identitySession.address, 'sent before the clock drifted')
+    await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'unread marker')
+    await setup.mockInput.typeText(`/open ${alice.identity.address}`)
+    // Opening runs within Enter. Only the local clock falls behind there, not
+    // the in-process server's, nor the open conversation's server time.
+    behind = spyOn(Date, 'now').mockImplementation(() => realNow() - 60_000)
+    setup.mockInput.pressEnter()
+    behind.mockRestore()
+    await until(() => frame().includes('sent before the clock drifted'), 'alice opened')
+    expect(frame()).toContain('── new ──')
+  } finally {
+    behind?.mockRestore()
+    await carol.close()
+  }
+})
+
 test('at 60×20 the list and the conversation take turns on screen', async () => {
   await start(undefined, 20, undefined, { width: 60 })
   expect(frame()).toContain('← conversations')
@@ -591,6 +615,22 @@ test('the palette follows the terminal under system, and /theme overrides it', a
   await setup.mockInput.typeText('/theme system')
   setup.mockInput.pressEnter()
   await until(() => colorOf('hushhash').join() === ints(PALETTES.light.accent).join(), 'following the terminal again')
+})
+
+test('an open dialog and toasts on screen repaint when the terminal theme changes', async () => {
+  await start()
+  await setup.mockInput.typeText('/theme')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('Theme system.'), 'toast shown')
+  setup.mockInput.pressKey('F1')
+  await until(() => frame().includes(' Help '), 'help open')
+  expect(colorOf(' Help ')).toEqual(ints(PALETTES.dark.accent))
+  expect(colorOf('Theme system.')).toEqual(ints(PALETTES.dark.text))
+
+  setup.renderer.emit('theme_mode', 'light')
+  await until(() => colorOf(' Help ').join() === ints(PALETTES.light.accent).join(), 'dialog repainted')
+  expect(colorOf('Commands')).toEqual(ints(PALETTES.light.text))
+  expect(colorOf('Theme system.')).toEqual(ints(PALETTES.light.text))
 })
 
 test('--theme light starts in the light palette', async () => {

@@ -42,6 +42,8 @@ class MessageRow {
   private readonly bubble: BoxRenderable
   private readonly text: TextRenderable
   private readonly meta: TextRenderable
+  /** What `text` shows, so the tick only sets it when it changes. */
+  private shown: string | null = null
 
   constructor(renderer: CliRenderer, readonly mine: boolean) {
     const side = mine ? 'flex-end' : 'flex-start'
@@ -74,7 +76,10 @@ class MessageRow {
     this.bubble.backgroundColor = this.mine ? COLORS.bubbleYou : COLORS.bubbleThem
     // The text fades in its last seconds, before it disappears.
     this.text.fg = meta.tone === 'critical' ? COLORS.muted : COLORS.text
-    this.text.content = terminalText(message.plaintext, { newlines: true })
+    if (message.plaintext !== this.shown) {
+      this.shown = message.plaintext
+      this.text.content = terminalText(message.plaintext, { newlines: true })
+    }
     const label = fg(meta.state === 'failed' ? COLORS.error : TONE_COLOR[meta.tone]())(meta.label)
     this.meta.content = meta.icon ? t`${label} ${fg(STATE_COLOR[meta.state]())(meta.icon)}` : t`${label}`
   }

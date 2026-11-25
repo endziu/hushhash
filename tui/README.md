@@ -69,11 +69,13 @@ fifth and red in its last 10 seconds, when the text fades. Your own also show th
 | `◌` | Sending |
 | `○` | Delivered, not opened yet. The time shown is the 24h limit an unopened message waits, labelled `unopened`; its lifetime starts when it is opened |
 | `✓` | Opened; the time shown is how long until it disappears |
-| `✗` | Not sent. Its text goes back to the composer if that is empty; it may still have arrived, so check before resending |
+| `✗` | Not sent. Its text goes back to the composer if that is empty, and the message says `Enter resends`; otherwise `retype to resend`. It may still have arrived, so check before resending |
 
 Conversations and your status show a small mosaic avatar, the same one the browser draws for that
-address, so similar short addresses differ at a glance. Terminals without at least 256 colours
-show none.
+address, so similar short addresses differ at a glance. The status bar has one line, so it shows
+the top half of yours. Terminals without at least 256 colours show none.
+
+Under `system`, open dialogs and toasts change colour with the terminal too.
 
 Below 70 columns, or after Ctrl+B, the list is a screen of its own: Tab or Esc switches between it
 and the conversation, whose header says `← conversations`. Otherwise the sidebar widens with the

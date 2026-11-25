@@ -31,8 +31,8 @@ test('a message shows as sending, then as accepted under its id until the conver
 
 test('a failed message stays until the next send or a clear', () => {
   const outbox = new Outbox(self)
-  outbox.failed(outbox.add('lost', 1000))
-  expect(outbox.merge([], 1000)).toMatchObject([{ outgoing: 'failed', plaintext: 'lost' }])
+  outbox.failed(outbox.add('lost', 1000), true)
+  expect(outbox.merge([], 1000)).toMatchObject([{ outgoing: 'failed', plaintext: 'lost', restored: true }])
   outbox.clearFailed()
   expect(outbox.merge([], 1000)).toHaveLength(0)
 

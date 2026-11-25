@@ -14,7 +14,7 @@ export const COMPOSER_HINTS: readonly Hint[] = [
   { keys: 'Alt+Enter', action: 'new line', priority: PRIORITY.normal },
   { keys: 'Tab/Esc', action: 'list', priority: PRIORITY.high },
   { keys: 'PgUp/PgDn', action: 'scroll', priority: PRIORITY.low },
-  { keys: 'Ctrl+B', action: 'sidebar', priority: PRIORITY.lowest },
+  { keys: 'Ctrl+B', action: 'hide list', priority: PRIORITY.lowest },
   { keys: 'F1', action: 'help', priority: PRIORITY.essential },
   { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
 ]
@@ -24,7 +24,7 @@ export const LIST_HINTS: readonly Hint[] = [
   { keys: 'Enter', action: 'open', priority: PRIORITY.essential },
   { keys: 'Tab', action: 'composer', priority: PRIORITY.high },
   { keys: 'PgUp/PgDn', action: 'scroll', priority: PRIORITY.low },
-  { keys: 'Ctrl+B', action: 'sidebar', priority: PRIORITY.lowest },
+  { keys: 'Ctrl+B', action: 'hide list', priority: PRIORITY.lowest },
   { keys: '?', action: 'help', priority: PRIORITY.essential },
   { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
 ]

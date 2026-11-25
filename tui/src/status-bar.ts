@@ -46,7 +46,7 @@ export class StatusBar {
   render({ live, ttl, attentive, now }: StatusState): void {
     const items: BarItem[] = [
       { text: t`${fg(COLORS.accent)('hushhash')}`, priority: PRIORITY.essential },
-      { text: this.you(), priority: PRIORITY.low },
+      { text: this.identityText(), priority: PRIORITY.low },
       { text: connectionText(live, now), priority: PRIORITY.essential },
     ]
     if (live.state === 'retrying') items.push({ text: t`${dim(terminalText(live.reason))}`, priority: PRIORITY.lowest })
@@ -58,7 +58,8 @@ export class StatusBar {
     this.view.content = fitBar(items, this.renderer.width - 2, t`${'  '}`)
   }
 
-  private you(): StyledText {
+  /** Your avatar, where the terminal can draw it, and short address. */
+  private identityText(): StyledText {
     const text = t`${shortAddress(this.address)} ${dim('(you)')}`
     if (!canDrawAvatars(this.renderer.capabilities)) return text
     return new StyledText([...avatarLine(avatarGrid(this.address, themeName())).chunks, ...t` `.chunks, ...text.chunks])

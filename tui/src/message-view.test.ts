@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { generateKeypair } from '../../src/shared/keypair'
 import { UNOPENED_RETENTION_MS } from '../../src/shared/message-envelope'
 import {
-  GROUP_GAP_MS, NewMessages, expiryTone, layoutRows, messageMeta, messageState, type ShownMessage,
+  GROUP_GAP_MS, NewMessages, expiryTone, layoutRows, messageMeta, messageState, newestAccepted, type ShownMessage,
 } from './message-view'
 
 const self = generateKeypair().address
@@ -84,7 +84,8 @@ test('your messages show their state; an unopened one shows the retention limit 
   const opened = message('o', self, NOW - MINUTE, { opened_at: NOW - MINUTE, expires_at: NOW + 4 * MINUTE })
   expect([sending, failed, unopened, opened].map(messageState)).toEqual(['sending', 'failed', 'unopened', 'opened'])
   expect(messageMeta(sending, true, NOW)).toMatchObject({ label: 'sending', icon: '◌' })
-  expect(messageMeta(failed, true, NOW)).toMatchObject({ label: 'not sent', icon: '✗' })
+  expect(messageMeta(failed, true, NOW)).toMatchObject({ label: 'not sent · retype to resend', icon: '✗' })
+  expect(messageMeta({ ...failed, restored: true }, true, NOW)).toMatchObject({ label: 'not sent · Enter resends' })
   expect(messageMeta(unopened, true, NOW)).toMatchObject({ label: 'unopened 24h', icon: '○', tone: 'normal' })
   expect(messageMeta(opened, true, NOW)).toMatchObject({ label: '4m', icon: '✓' })
   expect(messageMeta(opened, true, NOW + 4 * MINUTE - 12_000)).toMatchObject({ label: '12s', tone: 'warning' })
@@ -92,7 +93,7 @@ test('your messages show their state; an unopened one shows the retention limit 
   expect(messageMeta({ ...opened, sender: partner }, false, NOW)).toMatchObject({ label: '4m', icon: null })
 })
 
-test('new messages are those from your partner accepted while you were not looking', () => {
+test('new messages are those from your partner accepted after the newest you saw', () => {
   const marker = new NewMessages()
   const messages = [
     message('old', partner, NOW - 10 * MINUTE),
@@ -100,34 +101,34 @@ test('new messages are those from your partner accepted while you were not looki
     message('new1', partner, NOW - 3 * MINUTE),
     message('new2', partner, NOW - 2 * MINUTE),
   ]
-  // Nothing is new until you look away.
+  // Nothing is new until there is something to count from.
   expect(marker.first(messages, partner)).toBeNull()
-  marker.reset(NOW - 5 * MINUTE, NOW)
+  marker.reset(NOW - 5 * MINUTE)
   expect(marker.first(messages, partner)).toBe('new1')
-  // What arrives while you look is not new.
-  expect(marker.first([...messages, message('later', partner, NOW + MINUTE)], partner)).toBe('new1')
-  marker.reset(null, null)
+  marker.reset(null)
   expect(marker.first(messages, partner)).toBeNull()
 })
 
-test('looking away and back marks what arrived meanwhile, and keeps an earlier mark', () => {
+test('what arrives while you look is not new, however its time compares', () => {
   const marker = new NewMessages()
-  marker.away(NOW)
-  marker.back(NOW + 2 * MINUTE)
-  const during = message('during', partner, NOW + MINUTE)
-  const after = message('after', partner, NOW + 3 * MINUTE)
-  expect(marker.first([during, after], partner)).toBe('during')
-  // Away again while marked: still counts from the first time.
-  marker.away(NOW + 4 * MINUTE)
-  marker.back(NOW + 6 * MINUTE)
-  expect(marker.first([during, after, message('again', partner, NOW + 5 * MINUTE)], partner)).toBe('during')
+  marker.reset(NOW - 5 * MINUTE)
+  marker.arrivedWhileLooking('live')
+  expect(marker.first([message('live', partner, NOW)], partner)).toBeNull()
+  expect(marker.first([message('live', partner, NOW), message('later', partner, NOW + MINUTE)], partner)).toBe('later')
+})
 
-  // Away with nothing arriving: the next window starts afresh.
-  const quiet = new NewMessages()
-  quiet.away(NOW)
-  quiet.back(NOW + MINUTE)
-  expect(quiet.first([after], partner)).toBeNull()
-  quiet.away(NOW + 2 * MINUTE)
-  quiet.back(NOW + 4 * MINUTE)
-  expect(quiet.first([after], partner)).toBe('after')
+test('looking away counts from the newest message on screen, and keeps an earlier mark', () => {
+  const marker = new NewMessages()
+  const seen = message('seen', partner, NOW)
+  marker.away(newestAccepted([seen]))
+  const during = message('during', partner, NOW + MINUTE)
+  expect(marker.first([seen, during], partner)).toBe('during')
+  // Away again while marked: still counts from the first time.
+  marker.away(newestAccepted([seen, during]))
+  expect(marker.first([seen, during, message('again', partner, NOW + 2 * MINUTE)], partner)).toBe('during')
+
+  // Away with nothing on screen: whatever arrives is new.
+  const empty = new NewMessages()
+  empty.away(newestAccepted([]))
+  expect(empty.first([message('first', partner, NOW)], partner)).toBe('first')
 })

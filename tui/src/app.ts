@@ -15,7 +15,7 @@ import { StatusBar } from './status-bar'
 import { Modals } from './modals'
 import { Toasts, type ToastKind } from './toasts'
 import { Transcript } from './transcript'
-import { NewMessages } from './message-view'
+import { NewMessages, newestAccepted } from './message-view'
 import { Outbox } from './outbox'
 import { resolveTheme, setTheme, type ThemeSetting } from './theme'
 
@@ -50,8 +50,8 @@ export class App {
   private conversations: ConversationEntry[] = []
   /** Conversations with messages you have not seen, and when the first of them was accepted. */
   private readonly unread = new Map<Address, number>()
-  /** When you last looked at each conversation you switched away from, in server time. */
-  private readonly lastLooked = new Map<Address, number>()
+  /** The newest message on screen when you switched away from each conversation, if any. */
+  private readonly lastLooked = new Map<Address, number | null>()
   private session: ConversationSession | null = null
   private partner: Address | null = null
   private readonly outbox: Outbox
@@ -173,7 +173,7 @@ export class App {
   private readonly onBlur = () => this.attention.blur()
   private readonly onPaste = () => this.attention.input()
   private readonly onResize = () => {
-    this.layout.apply()
+    this.layout.fitToTerminal()
     this.composer.fit()
     this.render()
   }
@@ -197,17 +197,17 @@ export class App {
     this.composer.applyTheme()
     this.transcript.applyTheme()
     this.modals.applyTheme()
+    this.toasts.applyTheme()
     this.render()
   }
 
-  /** The current server time in the open conversation, if any. */
-  private serverNow(): number {
-    return this.session?.snapshot().now() ?? Date.now()
+  /** The newest acceptance time in the open conversation: server time, unlike the local clock. */
+  private newestShown(): number | null {
+    return this.session ? newestAccepted(this.session.snapshot().messages) : null
   }
 
   private attentionChanged(attentive: boolean): void {
-    if (attentive) this.newMessages.back(this.serverNow())
-    else this.newMessages.away(this.serverNow())
+    if (!attentive) this.newMessages.away(this.newestShown())
     this.identity.setAttention(attentive)
     this.session?.attentionChanged(attentive)
     this.render()
@@ -285,8 +285,10 @@ export class App {
       this.renderMessages()
     }
     if (event.type !== 'message') return
-    const { sender, recipient, created_at } = event.data
+    const { id, sender, recipient, created_at } = event.data
     const partner = sender === this.identity.address ? recipient : sender
+    // Seen as it arrives, so not new later.
+    if (partner === this.partner && this.attention.attentive) this.newMessages.arrivedWhileLooking(id)
     if (partner !== this.partner && sender !== this.identity.address && !this.unread.has(partner)) this.unread.set(partner, created_at)
     this.scheduleConversationRefresh()
     this.renderList()
@@ -316,14 +318,14 @@ export class App {
   open(partner: Address): void {
     if (partner === this.identity.address) { this.toast('That is your own address', 'error'); return }
     if (partner !== this.partner) {
-      if (this.partner) this.lastLooked.set(this.partner, this.serverNow())
+      if (this.partner) this.lastLooked.set(this.partner, this.newestShown())
       this.session?.dispose()
       this.transcript.reset()
       this.outbox.clear()
-      // Mark what arrived since you last looked, or since the first unread message.
+      // Mark what arrived after the newest message you saw here, or from the first unread one.
       const firstUnread = this.unread.get(partner)
       const since = this.lastLooked.get(partner) ?? (firstUnread === undefined ? null : firstUnread - 1)
-      this.newMessages.reset(since, this.attention.attentive ? Date.now() : null)
+      this.newMessages.reset(since)
       this.partner = partner
       this.session = new ConversationSession({
         self: this.identity.address,
@@ -358,7 +360,7 @@ export class App {
     if (!session) { this.toast('Open a conversation first: /open ADDRESS', 'error'); return }
     this.composer.clear()
     // Sending clears the new-messages divider and earlier failures.
-    this.newMessages.reset(null, null)
+    this.newMessages.reset(null)
     this.outbox.clearFailed()
     const key = this.outbox.add(input.text, session.snapshot().now())
     this.renderMessages()
@@ -367,9 +369,10 @@ export class App {
     }, error => {
       // After quitting, the composer is gone and nobody sees a toast.
       if (this.stopped) return
-      if (this.session === session) this.outbox.failed(key)
       // Nothing typed is lost: a failed message goes back to an empty composer.
-      if (!this.composer.text) this.composer.setText(text)
+      const restored = !this.composer.text
+      if (restored) this.composer.setText(text)
+      if (this.session === session) this.outbox.failed(key, restored)
       this.toast(`Send failed: ${errorMessage(error, 'unknown error')}. It may still have arrived; check before resending.`, 'error')
     }).finally(() => this.renderMessages())
   }

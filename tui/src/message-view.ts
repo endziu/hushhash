@@ -15,6 +15,8 @@ export interface ShownMessage {
   expires_at: number | null
   /** How an outgoing message is doing; null once delivered. */
   outgoing: 'sending' | 'failed' | null
+  /** A failed message's text went back to the composer, so Enter resends it. */
+  restored?: boolean
 }
 
 /** Messages from one sender within this long of each other share a header. */
@@ -96,48 +98,58 @@ export function messageMeta(message: ShownMessage, mine: boolean, now: number): 
   const tone = expiryTone(message, now)
   const icon = mine ? STATE_ICONS[state] : null
   if (state === 'sending') return { label: 'sending', tone, icon, state }
-  if (state === 'failed') return { label: 'not sent', tone, icon, state }
+  if (state === 'failed') return { label: message.restored ? 'not sent · Enter resends' : 'not sent · retype to resend', tone, icon, state }
   const left = fmtRemaining(message.expires_at!, now)
   // Its own wording, so the retention limit is not mistaken for its lifetime.
   return { label: state === 'unopened' && mine ? `unopened ${left}` : left, tone, icon, state }
 }
 
+/** The newest acceptance time among `messages`, or null for none. */
+export function newestAccepted(messages: readonly Pick<ShownMessage, 'created_at'>[]): number | null {
+  return messages.reduce<number | null>((newest, message) => Math.max(newest ?? -Infinity, message.created_at), null)
+}
+
 /**
- * Remembers when you last looked at a conversation, to mark the first
- * message from your partner since then. The window opens when you stop
- * looking (switch away, or the terminal loses attention) and closes when you
- * look again; messages accepted in it count as new. Sending or switching
- * away removes the mark.
+ * Finds the first message from your partner since you last looked at a
+ * conversation. Only acceptance times, which are server time, are compared,
+ * so the local clock never matters: a message is new when it was accepted
+ * after the newest one you had on screen, and did not arrive live while you
+ * were looking. Sending or switching away removes the mark.
  */
 export class NewMessages {
-  private from: number | null = null
-  private to: number | null = null
+  /** Messages accepted after this are new; null when nothing is. */
+  private since: number | null = null
+  /** Arrived while you were looking, so not new whenever accepted. */
+  private readonly seen = new Set<string>()
   private marked = false
 
-  /** Starts over, counting from `since` (null: nothing is new); `now` is null while away. */
-  reset(since: number | null, now: number | null): void {
-    this.from = since
-    this.to = since === null ? null : now
+  /** Starts over: messages accepted after `since` are new; null means none are. */
+  reset(since: number | null): void {
+    this.since = since
+    this.seen.clear()
     this.marked = false
   }
 
-  /** You stopped looking at `now`. */
-  away(now: number): void {
-    // While something is marked, keep counting from the earlier time.
-    if (this.from === null || !this.marked) this.from = now
-    this.to = null
+  /** A message that arrived while you were looking. */
+  arrivedWhileLooking(key: string): void {
+    this.seen.add(key)
   }
 
-  /** You are looking again at `now`. */
-  back(now: number): void {
-    if (this.from !== null && this.to === null) this.to = now
+  /**
+   * You stopped looking; `newest` is the newest acceptance time on screen.
+   * An existing mark stays, so it keeps counting from the earlier time.
+   */
+  away(newest: number | null): void {
+    if (this.marked) return
+    // With nothing on screen, everything that arrives from now on is new.
+    this.since = newest ?? -Infinity
   }
 
-  /** The key of the first message from `partner` in the window, if any. */
+  /** The key of the first new message from `partner`, if any; keeps a later away() from moving it. */
   first(messages: readonly ShownMessage[], partner: Address): string | null {
-    const { from, to } = this
-    const found = from === null ? undefined : messages.find(message =>
-      message.sender === partner && message.created_at > from && (to === null || message.created_at <= to))
+    const since = this.since
+    const found = since === null ? undefined : messages.find(message =>
+      message.sender === partner && message.created_at > since && !this.seen.has(message.key))
     this.marked = found !== undefined
     return found?.key ?? null
   }

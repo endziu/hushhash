@@ -27,7 +27,7 @@ export const HELP = [
   '  //text             send text that starts with /',
   '',
   'Your messages',
-  '  ◌ sending          ✗ not sent (its text goes back to an empty composer)',
+  '  ◌ sending          ✗ not sent: Enter resends it from the composer',
   '  ○ not opened yet   the time shown is how long it waits: 24h unopened',
   '  ✓ opened           the time shown is how long until it disappears',
   '  Every message shows its time left. It turns amber in its last fifth',

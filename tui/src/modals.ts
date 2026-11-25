@@ -51,6 +51,8 @@ interface ModalParts {
 
 /** The modal on screen. */
 interface MountedModal extends ModalParts {
+  /** Repaint its parts with the palette in use. */
+  painters: (() => void)[]
   cancel: () => void
   /** What had focus before the modal opened, to give it back on close. */
   restore: Renderable | null
@@ -70,6 +72,8 @@ function plain(key: KeyEvent): boolean {
 export class Modals {
   private readonly backdrop: BoxRenderable
   private current: MountedModal | null = null
+  /** Collects the painters of the modal being built. */
+  private painters: (() => void)[] = []
 
   /** `onChange` runs after a modal opens or closes. */
   constructor(private readonly renderer: CliRenderer, parent: Renderable, private readonly onChange: () => void = () => {}) {
@@ -85,9 +89,10 @@ export class Modals {
     parent.add(this.backdrop)
   }
 
-  /** Repaints with the current palette; an open modal keeps the one it opened with. */
+  /** Repaints the backdrop and any open modal with the current palette. */
   applyTheme(): void {
     this.backdrop.backgroundColor = COLORS.backdrop
+    for (const paint of this.current?.painters ?? []) paint()
   }
 
   get isOpen(): boolean {
@@ -161,7 +166,7 @@ export class Modals {
       const paint = () => buttons.forEach((button, index) => {
         button.content = buttonText(labels[index]!, index === selected, index === 1)
       })
-      paint()
+      this.themed(paint)
       for (const button of buttons) row.add(button)
       frame.add(row)
       return {
@@ -189,12 +194,14 @@ export class Modals {
     return this.present<string | null>(null, finish => {
       const frame = this.frame(title)
       if (label) frame.add(this.text(label, { marginBottom: 1 }))
-      const input = new InputRenderable(this.renderer, {
-        value, placeholder, width: '100%', flexShrink: 0,
-        textColor: COLORS.text, focusedTextColor: COLORS.text, placeholderColor: COLORS.muted,
-        backgroundColor: COLORS.selection, focusedBackgroundColor: COLORS.selection,
+      const input = new InputRenderable(this.renderer, { value, placeholder, width: '100%', flexShrink: 0 })
+      const problem = new TextRenderable(this.renderer, { content: '', wrapMode: 'word', flexShrink: 0 })
+      this.themed(() => {
+        input.textColor = input.focusedTextColor = COLORS.text
+        input.placeholderColor = COLORS.muted
+        input.backgroundColor = input.focusedBackgroundColor = COLORS.selection
+        problem.fg = COLORS.error
       })
-      const problem = new TextRenderable(this.renderer, { content: '', fg: COLORS.error, wrapMode: 'word', flexShrink: 0 })
       input.on(InputRenderableEvents.INPUT, () => { problem.content = '' })
       input.on(InputRenderableEvents.ENTER, (text: string) => {
         const invalid = validate?.(text) ?? null
@@ -226,8 +233,9 @@ export class Modals {
         this.unmount(parts.frame)
         resolve(value)
       }
+      this.painters = []
       const parts = build(finish)
-      this.mount({ ...parts, cancel: () => finish(cancelled), restore: null })
+      this.mount({ ...parts, painters: this.painters, cancel: () => finish(cancelled), restore: null })
     })
   }
 
@@ -266,16 +274,28 @@ export class Modals {
     modal.frame.destroyRecursively()
   }
 
+  /** Paints now, and again whenever the palette changes while this modal is open. */
+  private themed(paint: () => void): void {
+    paint()
+    this.painters.push(paint)
+  }
+
   private text(content: string | StyledText, options: { marginBottom?: number } = {}): TextRenderable {
-    return new TextRenderable(this.renderer, { content, wrapMode: 'word', fg: COLORS.text, ...options })
+    const text = new TextRenderable(this.renderer, { content, wrapMode: 'word', ...options })
+    this.themed(() => { text.fg = COLORS.text })
+    return text
   }
 
   private frame(title: string, width = DEFAULT_WIDTH): BoxRenderable {
-    return new BoxRenderable(this.renderer, {
+    const frame = new BoxRenderable(this.renderer, {
       width, maxWidth: '90%', maxHeight: '90%', flexDirection: 'column', paddingX: 1,
-      border: true, borderStyle: 'rounded', borderColor: COLORS.accent, backgroundColor: COLORS.surface,
-      title: ` ${title} `, titleColor: COLORS.accent,
+      border: true, borderStyle: 'rounded', title: ` ${title} `,
     })
+    this.themed(() => {
+      frame.borderColor = frame.titleColor = COLORS.accent
+      frame.backgroundColor = COLORS.surface
+    })
+    return frame
   }
 
   private innerHeight(): number {
