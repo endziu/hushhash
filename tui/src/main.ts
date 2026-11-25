@@ -6,7 +6,7 @@ import { createCliRenderer } from '@opentui/core'
 import { requireAddress } from '../../src/shared/address'
 import { serverOrigin } from '../../src/cli/client'
 import { loadIdentity } from '../../src/cli/identity'
-import { Account, ClientUpdateRequiredError } from './account'
+import { IdentitySession, ClientUpdateRequiredError } from './identity-session'
 import { App, DEFAULT_LIFETIME, lifetimeLabel, parseLifetime } from './app'
 import { safeText } from './text'
 
@@ -50,22 +50,22 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     throw error
   }
 
-  const account = new Account(server, identity)
+  const identitySession = new IdentitySession(server, identity)
   try {
     // Fail before taking over the screen, so connection errors stay readable.
-    await account.login().catch(cause => {
-      throw account.signal.reason instanceof ClientUpdateRequiredError
-        ? account.signal.reason
+    await identitySession.login().catch(cause => {
+      throw identitySession.signal.reason instanceof ClientUpdateRequiredError
+        ? identitySession.signal.reason
         : new Error(`Cannot sign in to ${server}: ${cause instanceof Error ? cause.message : 'unknown error'}`)
     })
     const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
-    const app = new App(renderer, account, { server, ttl, partner })
+    const app = new App(renderer, identitySession, { server, ttl, partner })
     await app.run()
     await renderer.closed
   } finally {
-    await account.close().catch(() => console.error('Session cleanup failed; it will expire automatically.'))
+    await identitySession.close().catch(() => console.error('Session cleanup failed; it will expire automatically.'))
   }
-  if (account.signal.reason instanceof ClientUpdateRequiredError) throw account.signal.reason
+  if (identitySession.signal.reason instanceof ClientUpdateRequiredError) throw identitySession.signal.reason
 }
 
 if (import.meta.main) {

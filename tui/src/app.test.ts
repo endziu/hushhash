@@ -8,14 +8,14 @@ import * as constants from '../../src/server/constants'
 import { checksumAddress, shortAddress, type Address } from '../../src/shared/address'
 import { generateKeypair } from '../../src/shared/keypair'
 import { ChatClient } from '../../src/cli/client'
-import { Account } from './account'
+import { IdentitySession } from './identity-session'
 import { App } from './app'
 
 type Setup = Awaited<ReturnType<typeof createTestRenderer>>
 
 let server: ReturnType<typeof Bun.serve>
 let setup: Setup
-let account: Account
+let identitySession: IdentitySession
 let app: App
 let alice: ChatClient
 let pushes: number
@@ -34,7 +34,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   app?.stop()
-  await account?.close()
+  await identitySession?.close()
   await alice.close()
   await server.stop(true)
   setPushSender(undefined)
@@ -42,11 +42,11 @@ afterEach(async () => {
   getDb().close()
 })
 
-async function start(partner: Address | undefined = alice.identity.address, height = 32) {
-  account = new Account(server.url.origin, generateKeypair())
-  await account.login()
+async function start(partner: Address | undefined = alice.identity.address, height = 32, idleMs?: number) {
+  identitySession = new IdentitySession(server.url.origin, generateKeypair())
+  await identitySession.login()
   setup = await createTestRenderer({ width: 110, height })
-  app = new App(setup.renderer, account, { server: server.url.origin, ttl: 1800, partner })
+  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner, idleMs })
   void app.run()
   await until(() => frame().includes('● connected'), 'live connection')
 }
@@ -57,12 +57,13 @@ function frame(): string {
 
 async function until(check: () => boolean | Promise<boolean>, description: string, timeout = 4000) {
   const deadline = performance.now() + timeout
+  // Render first: the frame may be stale, or still being drawn.
+  await setup.renderOnce()
   while (!await check()) {
     if (performance.now() > deadline) throw new Error(`Timed out: ${description}\n${frame()}`)
-    await setup.renderOnce()
     await Bun.sleep(20)
+    await setup.renderOnce()
   }
-  await setup.renderOnce()
 }
 
 /** Clicks the conversation list entry for `address`. */
@@ -83,26 +84,26 @@ function openedAt(id: string): number | null {
 }
 
 async function sentByTui() {
-  return (await alice.read(account.address, undefined, { confirmAvailability: false })).messages.filter(message => message.sender === account.address)
+  return (await alice.read(identitySession.address, undefined, { confirmAvailability: false })).messages.filter(message => message.sender === identitySession.address)
 }
 
 test('shows and opens an incoming message while the terminal is focused', async () => {
   await start()
-  const message = await alice.send(account.address, 'hello terminal')
+  const message = await alice.send(identitySession.address, 'hello terminal')
   await until(() => frame().includes('hello terminal'), 'message rendered')
   expect(openedAt(message.id)).not.toBeNull()
 })
 
 test('an unfocused terminal leaves messages unopened and lets push through; focus opens them', async () => {
   await start()
-  savePushSubscription(account.address, { endpoint: 'https://push.invalid/tui', p256dh: 'x', auth: 'y' })
-  await alice.send(account.address, 'while focused')
+  savePushSubscription(identitySession.address, { endpoint: 'https://push.invalid/tui', p256dh: 'x', auth: 'y' })
+  await alice.send(identitySession.address, 'while focused')
   await until(() => frame().includes('while focused'), 'focused message')
   expect(pushes).toBe(0)
 
   setup.renderer.emit('blur')
   await Bun.sleep(500) // attention settles, then reaches the server
-  const away = await alice.send(account.address, 'while away')
+  const away = await alice.send(identitySession.address, 'while away')
   await Bun.sleep(600)
   await setup.renderOnce()
   expect(pushes).toBe(1)
@@ -112,6 +113,41 @@ test('an unfocused terminal leaves messages unopened and lets push through; focu
   setup.renderer.emit('focus')
   await until(() => frame().includes('while away'), 'opened on focus')
   expect(openedAt(away.id)).not.toBeNull()
+})
+
+test('a terminal that never reports focus goes away when idle; a key press brings it back', async () => {
+  await start(undefined, 32, 1000)
+  savePushSubscription(identitySession.address, { endpoint: 'https://push.invalid/tui', p256dh: 'x', auth: 'y' })
+  await until(() => frame().includes('away: new messages stay unopened'), 'idle', 3000)
+  await Bun.sleep(500) // attention settles, then reaches the server
+  await setup.mockInput.typeText(`/open ${alice.identity.address}`)
+  setup.mockInput.pressEnter()
+  await until(() => !frame().includes('away: new messages stay unopened'), 'typing counts as input')
+  await until(() => frame().includes('away: new messages stay unopened'), 'idle again', 3000)
+  await Bun.sleep(500)
+  const away = await alice.send(identitySession.address, 'while idle')
+  await Bun.sleep(600)
+  await setup.renderOnce()
+  expect(pushes).toBe(1)
+  expect(openedAt(away.id)).toBeNull()
+  expect(frame()).not.toContain('while idle')
+
+  setup.mockInput.pressArrow('down')
+  await until(() => frame().includes('while idle'), 'opened after a key press')
+  expect(openedAt(away.id)).not.toBeNull()
+})
+
+test('a multi-line paste that starts with / is a message, and an unknown command keeps its text', async () => {
+  await start()
+  await setup.mockInput.pasteBracketedText('/usr/local/bin\nis on my PATH')
+  setup.mockInput.pressEnter()
+  await until(async () => (await sentByTui()).length === 1, 'pasted message sent')
+  expect((await sentByTui())[0]!.plaintext).toBe('/usr/local/bin\nis on my PATH')
+
+  await setup.mockInput.typeText('/tll 5m')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('Unknown command /tll'), 'unknown command')
+  expect(frame()).toContain('/tll 5m')
 })
 
 test('a multi-line paste stays in the composer and is sent as one message on Enter', async () => {
@@ -136,7 +172,7 @@ test('Alt+Enter adds a line instead of sending', async () => {
 
 test('peer control sequences and direction overrides are shown escaped', async () => {
   await start()
-  await alice.send(account.address, 'evil \x1b]52;c;UFdORUQ=\x07 abc‮dcba')
+  await alice.send(identitySession.address, 'evil \x1b]52;c;UFdORUQ=\x07 abc‮dcba')
   await until(() => frame().includes('evil'), 'hostile message rendered')
   expect(frame()).toContain('\\u001b]52;c;UFdORUQ=\\u0007')
   expect(frame()).toContain('\\u202e')
@@ -166,7 +202,7 @@ test('marks other conversations unread and opens them from the list', async () =
   await carol.login()
   try {
     await start(carol.identity.address)
-    const message = await alice.send(account.address, 'from alice')
+    const message = await alice.send(identitySession.address, 'from alice')
     await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'unread marker')
     expect(openedAt(message.id)).toBeNull()
     setup.mockInput.pressTab()
@@ -186,7 +222,7 @@ test('marks other conversations unread and opens them from the list', async () =
 
 test('/clear asks for confirmation, then clears for both participants', async () => {
   await start()
-  await alice.send(account.address, 'to be cleared')
+  await alice.send(identitySession.address, 'to be cleared')
   await until(() => frame().includes('to be cleared'), 'message rendered')
   await setup.mockInput.typeText('/clear')
   setup.mockInput.pressEnter()
@@ -195,7 +231,7 @@ test('/clear asks for confirmation, then clears for both participants', async ()
   await setup.mockInput.typeText('/clear')
   setup.mockInput.pressEnter()
   await until(() => !frame().includes('to be cleared'), 'conversation cleared')
-  expect((await alice.read(account.address)).messages).toHaveLength(0)
+  expect((await alice.read(identitySession.address)).messages).toHaveLength(0)
 })
 
 test('an unregistered partner is reported and a failed send keeps its text', async () => {
@@ -212,7 +248,7 @@ test('clicking a conversation in the list opens it', async () => {
   await carol.login()
   try {
     await start(carol.identity.address)
-    const message = await alice.send(account.address, 'clicked open')
+    const message = await alice.send(identitySession.address, 'clicked open')
     await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'alice listed')
     await clickConversation(alice.identity.address)
     await until(() => frame().includes('clicked open'), 'alice conversation opened by click')

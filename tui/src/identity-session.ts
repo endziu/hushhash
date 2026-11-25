@@ -37,7 +37,7 @@ export interface LiveHandlers {
  * whether this terminal suppresses push notifications, as a browser window's
  * focus does.
  */
-export class Account {
+export class IdentitySession {
   readonly api: ProtocolClient
   private token: string | null = null
   private loginPending: Promise<void> | null = null

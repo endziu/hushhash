@@ -9,7 +9,8 @@ import { MESSAGE_TTLS } from '../../src/shared/message-ttl'
 import { ConversationSession } from '../../src/client/lib/conversation-session'
 import { fmtDay, fmtRemaining, fmtTime } from '../../src/client/lib/display'
 import { errorMessage } from '../../src/client/lib/errors'
-import type { Account, ConnectionEpoch } from './account'
+import { IDLE_MS, TerminalAttention } from './attention'
+import type { ConnectionEpoch, IdentitySession } from './identity-session'
 import { safeText } from './text'
 
 const COLORS = {
@@ -25,21 +26,22 @@ const CLEAR_CONFIRM_MS = 10_000
 const HELP = [
   'Keys',
   '  Enter              send',
-  '  Shift/Alt+Enter    new line (Ctrl+J also works)',
+  '  Alt+Enter, Ctrl+J  new line (Shift+Enter too, where the terminal reports it)',
   '  Tab                switch between list and composer',
   '  Click              open a conversation from the list',
   '  PageUp/PageDown    scroll (PageUp at the top loads older)',
   '  Ctrl+C             quit',
   '',
   'Commands',
-  '  /open ADDRESS      start or switch conversation',
+  '  /open ADDRESS      start or switch conversation (also /new)',
   '  /ttl [5m|300]      lifetime of new messages',
   '  /clear             delete all messages for both of you',
   '  /retry             retry loading or opening',
+  '  /older             load older messages',
   '  /address           show your address',
   '  /log               toggle the debug log',
   '  /help              show or hide this help',
-  '  /quit              quit',
+  '  /quit              quit (also /exit)',
   '  //text             send text that starts with /',
 ].join('\n')
 
@@ -77,14 +79,16 @@ export interface AppOptions {
   server: string
   ttl: number
   partner?: Address
+  /** How long attention lasts after input in a terminal that has not reported focus. */
+  idleMs?: number
 }
 
 /**
  * The whole terminal client: a conversation list, the selected conversation
  * and a composer. The selected conversation is a ConversationSession, the
- * same synchronization the browser uses; terminal focus plays the part of
- * window attention, so an unfocused terminal neither opens messages nor
- * suppresses push notifications.
+ * same synchronization the browser uses; TerminalAttention plays the part of
+ * window attention, so an unfocused or idle terminal neither opens messages
+ * nor suppresses push notifications.
  */
 export class App {
   private readonly header: TextRenderable
@@ -104,7 +108,7 @@ export class App {
   private session: ConversationSession | null = null
   private partner: Address | null = null
   private epoch: ConnectionEpoch | null = null
-  private focused = true
+  private readonly attention: TerminalAttention
   private connected = false
   private status = 'Connecting…'
   private message: { text: string; error: boolean } | null = null
@@ -117,9 +121,15 @@ export class App {
   /** Resolves once the app has stopped and released the terminal. */
   readonly done = new Promise<void>(resolve => { this.resolveDone = resolve })
 
-  constructor(private readonly renderer: CliRenderer, private readonly account: Account, private readonly options: AppOptions) {
+  constructor(private readonly renderer: CliRenderer, private readonly identity: IdentitySession, private readonly options: AppOptions) {
     this.ttl = options.ttl
-    const root = new BoxRenderable(renderer, { width: '100%', height: '100%', flexDirection: 'column' })
+    this.attention = new TerminalAttention(attentive => this.attentionChanged(attentive), options.idleMs ?? IDLE_MS)
+    const root = new BoxRenderable(renderer, {
+      width: '100%', height: '100%', flexDirection: 'column',
+      // Mouse events bubble here from every renderable.
+      onMouseDown: () => this.attention.input(),
+      onMouseScroll: () => this.attention.input(),
+    })
     this.header = new TextRenderable(renderer, { content: '', height: 1 })
     const body = new BoxRenderable(renderer, { flexGrow: 1, flexDirection: 'row' })
     this.sidebar = new BoxRenderable(renderer, { width: 26, border: true, borderStyle: 'rounded', borderColor: COLORS.border, title: ' Conversations ' })
@@ -174,6 +184,7 @@ export class App {
     renderer.root.add(root)
 
     renderer.keyInput.on('keypress', this.onKey)
+    renderer.keyInput.on('paste', this.onPaste)
     renderer.on('focus', this.onFocus)
     renderer.on('blur', this.onBlur)
     // Signals destroy the renderer without asking; stop the same way as /quit.
@@ -188,7 +199,7 @@ export class App {
 
   /** Runs the live connection until the app stops. */
   async run(): Promise<void> {
-    void this.account.live({
+    void this.identity.live({
       event: event => this.liveEvent(event),
       connection: epoch => {
         this.epoch = epoch
@@ -199,10 +210,10 @@ export class App {
       },
       status: text => { this.status = text; this.render() },
     }).catch(error => {
-      if (!this.account.signal.aborted) this.show(errorMessage(error, 'Live connection failed'), true)
+      if (!this.identity.signal.aborted) this.show(errorMessage(error, 'Live connection failed'), true)
     })
     // An outdated client stops itself; the app follows so main can explain.
-    this.account.signal.addEventListener('abort', () => this.stop(), { once: true })
+    this.identity.signal.addEventListener('abort', () => this.stop(), { once: true })
     await this.done
   }
 
@@ -211,28 +222,30 @@ export class App {
     this.stopped = true
     clearInterval(this.tick)
     clearTimeout(this.refreshTimer)
+    this.attention.dispose()
     this.session?.dispose()
     this.session = null
-    this.account.stop()
+    this.identity.stop()
     this.renderer.keyInput.off('keypress', this.onKey)
+    this.renderer.keyInput.off('paste', this.onPaste)
     this.renderer.off('focus', this.onFocus)
     this.renderer.off('blur', this.onBlur)
     this.renderer.destroy()
     this.resolveDone()
   }
 
-  private readonly onFocus = () => this.setFocused(true)
-  private readonly onBlur = () => this.setFocused(false)
+  private readonly onFocus = () => this.attention.focus()
+  private readonly onBlur = () => this.attention.blur()
+  private readonly onPaste = () => this.attention.input()
 
-  private setFocused(focused: boolean): void {
-    if (this.focused === focused) return
-    this.focused = focused
-    this.account.setAttention(focused)
-    this.session?.attentionChanged(focused)
+  private attentionChanged(attentive: boolean): void {
+    this.identity.setAttention(attentive)
+    this.session?.attentionChanged(attentive)
     this.render()
   }
 
   private readonly onKey = (key: KeyEvent) => {
+    this.attention.input()
     if (key.ctrl && key.name === 'c') {
       key.preventDefault()
       this.stop()
@@ -274,8 +287,8 @@ export class App {
     this.session?.liveEvent(event)
     if (event.type !== 'message') return
     const { sender, recipient } = event.data
-    const partner = sender === this.account.address ? recipient : sender
-    if (partner !== this.partner && sender !== this.account.address) this.unread.add(partner)
+    const partner = sender === this.identity.address ? recipient : sender
+    if (partner !== this.partner && sender !== this.identity.address) this.unread.add(partner)
     this.scheduleConversationRefresh()
     this.renderList()
   }
@@ -287,7 +300,7 @@ export class App {
 
   private async refreshConversations(): Promise<boolean> {
     try {
-      const listed = await this.account.conversations()
+      const listed = await this.identity.conversations()
       if (this.stopped) return false
       const known = new Set(listed.map(conversation => conversation.address))
       // Conversations opened here stay listed before their first message.
@@ -296,13 +309,13 @@ export class App {
       this.renderList()
       return true
     } catch (error) {
-      if (!this.account.signal.aborted) this.show(`Could not load conversations: ${errorMessage(error, 'unknown error')}`, true)
+      if (!this.identity.signal.aborted) this.show(`Could not load conversations: ${errorMessage(error, 'unknown error')}`, true)
       return false
     }
   }
 
   open(partner: Address): void {
-    if (partner === this.account.address) { this.show('That is your own address', true); return }
+    if (partner === this.identity.address) { this.show('That is your own address', true); return }
     if (partner !== this.partner) {
       this.session?.dispose()
       for (const row of this.rows.values()) { this.scroll.remove(row); row.destroy() }
@@ -311,12 +324,12 @@ export class App {
       this.partner = partner
       this.clearPending = null
       this.session = new ConversationSession({
-        self: this.account.address,
+        self: this.identity.address,
         partner,
-        protocol: this.account.protocol(partner, () => this.refreshConversations()),
-        decrypt: this.account.decryptor(partner),
+        protocol: this.identity.protocol(partner, () => this.refreshConversations()),
+        decrypt: this.identity.decryptor(partner),
         connection: this.epoch,
-        attentive: this.focused,
+        attentive: this.attention.attentive,
       })
       this.session.subscribe(() => this.render())
     }
@@ -332,14 +345,17 @@ export class App {
   private submit(): void {
     const text = this.composer.plainText
     if (!text.trim()) return
-    if (text.startsWith('/') && !text.startsWith('//')) {
+    // Commands and the // escape are one line; pasted text that merely starts with / is a message.
+    const oneLine = !text.trim().includes('\n')
+    if (oneLine && text.startsWith('/') && !text.startsWith('//')) {
       this.composer.clear()
-      this.command(text.trim())
+      // Keep a mistyped command for fixing.
+      if (!this.command(text.trim())) this.composer.setText(text)
       return
     }
     const session = this.session
     if (!session) { this.show('Open a conversation first: /open ADDRESS', true); return }
-    const plaintext = text.startsWith('//') ? text.slice(1) : text
+    const plaintext = oneLine && text.startsWith('//') ? text.slice(1) : text
     this.composer.clear()
     this.message = null
     this.render()
@@ -350,7 +366,8 @@ export class App {
     })
   }
 
-  private command(line: string): void {
+  /** Runs a command line; false if there is no such command. */
+  private command(line: string): boolean {
     const [name, ...args] = line.split(/\s+/)
     const arg = args.join(' ')
     switch (name) {
@@ -359,64 +376,65 @@ export class App {
         const address = parseAddress(arg)
         if (!address) this.show('Usage: /open 0xADDRESS', true)
         else this.open(address)
-        return
+        return true
       }
       case '/ttl': {
-        if (!arg) { this.show(`Lifetime ${lifetimeLabel(this.ttl)}. Choose: ${MESSAGE_TTLS.map(lifetimeLabel).join(', ')}`); return }
+        if (!arg) { this.show(`Lifetime ${lifetimeLabel(this.ttl)}. Choose: ${MESSAGE_TTLS.map(lifetimeLabel).join(', ')}`); return true }
         const seconds = parseLifetime(arg)
-        if (seconds === null) { this.show(`Choose a lifetime: ${MESSAGE_TTLS.map(lifetimeLabel).join(', ')}`, true); return }
+        if (seconds === null) { this.show(`Choose a lifetime: ${MESSAGE_TTLS.map(lifetimeLabel).join(', ')}`, true); return true }
         this.ttl = seconds
         this.show(`New messages disappear ${lifetimeLabel(seconds)} after they are opened`)
-        return
+        return true
       }
       case '/clear': {
         const session = this.session
         const partner = this.partner
-        if (!session || !partner) { this.show('Open a conversation first', true); return }
+        if (!session || !partner) { this.show('Open a conversation first', true); return true }
         if (this.clearPending?.partner !== partner || Date.now() > this.clearPending.until) {
           this.clearPending = { partner, until: Date.now() + CLEAR_CONFIRM_MS }
           this.show('Type /clear again within 10 seconds to delete every message in this conversation for both of you', true)
-          return
+          return true
         }
         this.clearPending = null
         session.clear()
           .then(() => this.show('Conversation cleared for both of you'))
           .catch(error => this.show(`Clear failed: ${errorMessage(error, 'unknown error')}`, true))
-        return
+        return true
       }
       case '/retry':
         if (this.session?.snapshot().openingFailed) this.session.retryOpening()
         else this.session?.retry()
         this.message = null
         this.render()
-        return
+        return true
       case '/older':
         void this.session?.fetchOlder()
-        return
+        return true
       case '/address':
-        this.show(`Your address: ${checksumAddress(this.account.address)}`)
-        return
+        this.show(`Your address: ${checksumAddress(this.identity.address)}`)
+        return true
       case '/log':
         this.renderer.console.toggle()
-        return
+        return true
       case '/help':
         if (this.message?.text === HELP) { this.message = null; this.render() }
         else this.show(HELP)
-        return
+        return true
       case '/quit':
       case '/exit':
         this.stop()
-        return
+        return true
       default:
         this.show(`Unknown command ${safeText(name ?? '')}. /help lists commands; //text sends text starting with /`, true)
+        return false
     }
   }
 
   private render(): void {
     if (this.stopped) return
-    this.header.content = t` ${fg(COLORS.accent)('hushhash')}  ${checksumAddress(this.account.address)} ${dim('(you)')}  ${dim(this.options.server)}`
+    this.header.content = t` ${fg(COLORS.accent)('hushhash')}  ${checksumAddress(this.identity.address)} ${dim('(you)')}  ${dim(this.options.server)}`
     const connection = this.connected ? fg(COLORS.you)('● connected') : fg(COLORS.error)(`○ ${safeText(this.status)}`)
-    const focus = this.focused ? '' : '  · away: new messages stay unopened'
+    const focus = this.attention.attentive ? '' : '  · away: new messages stay unopened'
     this.footer.content = t` ${connection}  ${dim(`lifetime ${lifetimeLabel(this.ttl)}`)}${dim(focus)}  ${dim('· /help')}`
     this.renderList()
     this.renderPane()
@@ -442,7 +460,7 @@ export class App {
     if (!partner || !session) {
       this.pane.title = ' hushhash '
       this.notice.visible = true
-      this.notice.content = t`${fg(COLORS.muted)(`Your address is ${checksumAddress(this.account.address)}\n\nShare it, then start a conversation with /open 0xADDRESS, or pick one on the left.\n\n${HELP}`)}`
+      this.notice.content = t`${fg(COLORS.muted)(`Your address is ${checksumAddress(this.identity.address)}\n\nShare it, then start a conversation with /open 0xADDRESS, or pick one on the left.\n\n${HELP}`)}`
       return
     }
     this.pane.title = ` ${checksumAddress(partner)} `
@@ -457,7 +475,7 @@ export class App {
     if (snapshot.loading) lines.push(t`${dim('Loading…')}`)
     else if (snapshot.loadingOlder) lines.push(t`${dim('Loading older messages…')}`)
     else if (snapshot.hasMore) lines.push(t`${dim('PageUp at the top loads older messages')}`)
-    if (!this.focused) lines.push(t`${dim('Terminal unfocused: new messages are opened when you come back')}`)
+    if (!this.attention.attentive) lines.push(t`${dim('Away: new messages are opened when you come back or press a key')}`)
     this.notice.visible = lines.length > 0
     this.notice.content = lines.length ? joinLines(lines) : ''
   }
@@ -485,7 +503,7 @@ export class App {
   }
 
   private messageLine(message: DecryptedMessage, now: number): StyledText {
-    const mine = message.sender === this.account.address
+    const mine = message.sender === this.identity.address
     const who = mine ? fg(COLORS.you)('you ') : fg(COLORS.them)('them')
     const left = message.opened_at === null && mine
       ? `unopened · ${fmtRemaining(message.expires_at, now)}`

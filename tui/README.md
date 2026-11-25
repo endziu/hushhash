@@ -32,24 +32,32 @@ messages (default 30m, as in the browser).
 | PageUp / PageDown | Scroll; PageUp at the top loads older messages |
 | Ctrl+C | Quit |
 
-Commands typed in the composer: `/open ADDRESS`, `/ttl [5m|300]`, `/clear` (asks again first),
-`/retry`, `/address`, `/log`, `/help`, `/quit`. Start a message with `//` to send text that begins
-with `/`.
+Commands typed in the composer: `/open ADDRESS` (or `/new`), `/ttl [5m|300]`, `/clear` (asks
+again first), `/retry`, `/older`, `/address`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
+single line; multi-line text that starts with `/` is sent as a message. Start a one-line message
+with `//` to send text that begins with `/`; multi-line text is sent as typed. A mistyped command
+stays in the composer.
 
 A `●` in the list marks a conversation with messages that arrived while another was open. It is
 kept in memory only.
 
 ## Attention
 
-The TUI treats terminal focus the way the browser treats window focus, using the terminal's focus
-reporting:
+The TUI treats terminal attention the way the browser treats window focus:
 
-- Focused: incoming messages in the open conversation are opened (their lifetime starts) and shown,
-  and push notifications to your other devices are suppressed.
-- Unfocused: new messages stay unopened and hidden until you come back, and push notifications go
+- Attentive: incoming messages in the open conversation are opened (their lifetime starts) and
+  shown, and push notifications to your other devices are suppressed. It also counts the identity
+  as active that day, as a focused browser does.
+- Away: new messages stay unopened and hidden until you come back, and push notifications go
   through.
 
-Terminals without focus reporting count as always focused. In tmux, set `focus-events on`.
+Once the terminal reports focus, focus alone decides. Until it does (some terminals never report
+it, such as tmux without `focus-events on`, or screen), the TUI is attentive at start and for
+5 minutes after each key press, paste or click, then shows itself as away. Press any key to come
+back. In tmux, set `focus-events on`.
+
+Multi-line pastes need a terminal with bracketed paste, which nearly all modern terminals have.
+Without it, each pasted line arrives as Enter and is sent on its own.
 
 ## Develop
 

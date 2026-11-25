@@ -214,10 +214,12 @@ admin endpoint. Tracking begins when this version is deployed; there is no
 backfill. Only days with activity appear, and today's count is provisional.
 
 An identity counts once per UTC day when a browser explicitly reports foreground
-attention (visible and focused), sends an accepted message, or opens an available
-message. Foreground attention is refreshed by the existing 20-second heartbeat,
-including across midnight. Authentication, passive delivery, background/terminal
-connections, message recovery, and lifecycle-state lookups alone do not count.
+attention (visible and focused), the full-screen terminal client reports attention
+(see [tui/README.md](tui/README.md#attention)), the identity sends an accepted
+message, or it opens an available message. Attention is refreshed by the existing
+20-second heartbeat, including across midnight. Authentication, passive delivery,
+background browser and CLI connections, message recovery, and lifecycle-state
+lookups alone do not count.
 These are distinct identities, not humans or IP addresses.
 
 SQLite deduplicates across tabs, devices, and restarts using HMAC identity hashes
@@ -230,7 +232,8 @@ contents, IPs, or third-party analytics are collected for this metric.
 
 Push alerts are content-free wake-ups. Enabling is always an explicit click, and
 each identity decides per browser. An alert goes out once, when a message is
-accepted and the recipient has no attentive browser open. It can wait at the push
+accepted and the recipient has no attentive browser or full-screen terminal client
+open. It can wait at the push
 service until the message's unopened retention limit runs out, 24 hours after
 acceptance.
 
