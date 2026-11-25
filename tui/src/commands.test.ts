@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { generateKeypair } from '../../src/shared/keypair'
-import { Commands, HELP_MODAL, classifyInput, type CommandHost, type CommandSession } from './commands'
+import { Commands, classifyInput, type CommandHost, type CommandSession } from './commands'
+import { HELP_MODAL } from './help'
 import type { ModalOptions } from './modals'
 import type { ToastKind } from './toasts'
 
@@ -33,7 +34,7 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     setTtl: seconds => { state.ttl = seconds },
     open: address => { state.opened.push(address) },
     toast: (text, kind = 'info') => { state.toasts.push({ text, kind }) },
-    modal: options => { state.modals.push(options) },
+    modal: async options => { state.modals.push(options) },
     confirm: async () => { state.confirms++; return state.confirmAnswer },
     toggleLog: () => {},
     quit: () => { state.quit = true },

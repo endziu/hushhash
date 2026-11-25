@@ -266,13 +266,20 @@ test('/help, F1 and ? in the list open Help; Esc gives the keys back', async () 
   await until(() => frame().includes(' Help '), 'help from ? in the list')
 })
 
-test('key presses in an open dialog still count as attention', async () => {
+test('keys and clicks in an open dialog still count as attention', async () => {
   await start(undefined, 32, 1000)
   setup.mockInput.pressKey('F1' as never)
   await until(() => frame().includes(' Help '), 'help open')
   await until(() => frame().includes('away: new messages stay unopened'), 'idle', 3000)
   setup.mockInput.pressArrow('down')
   await until(() => !frame().includes('away: new messages stay unopened'), 'a key in the dialog counts')
+  expect(frame()).toContain(' Help ')
+
+  await until(() => frame().includes('away: new messages stay unopened'), 'idle again', 3000)
+  const lines = frame().split('\n')
+  const y = lines.findIndex(line => line.includes('Commands'))
+  await setup.mockMouse.click(lines[y]!.indexOf('Commands'), y)
+  await until(() => !frame().includes('away: new messages stay unopened'), 'a click in the dialog counts')
   expect(frame()).toContain(' Help ')
 })
 

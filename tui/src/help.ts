@@ -1,3 +1,5 @@
+import type { ModalOptions } from './modals'
+
 /** The keys and commands, shown by /help and on the empty screen. */
 export const HELP = [
   'Keys',
@@ -22,3 +24,6 @@ export const HELP = [
   '  /quit              quit (also /exit)',
   '  //text             send text that starts with /',
 ].join('\n')
+
+/** The Help modal, for /help, F1 and ? in the list. */
+export const HELP_MODAL: ModalOptions = { title: 'Help', body: HELP, width: 84 }

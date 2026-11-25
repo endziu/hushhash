@@ -1,7 +1,7 @@
 import { checksumAddress, parseAddress, type Address } from '../../src/shared/address'
 import { errorMessage } from '../../src/client/lib/errors'
 import { terminalText } from '../../src/cli/terminal-text'
-import { HELP } from './help'
+import { HELP_MODAL } from './help'
 import { LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './lifetime'
 import type { ConfirmOptions, ModalOptions } from './modals'
 import type { ToastKind } from './toasts'
@@ -40,14 +40,11 @@ export interface CommandHost {
   setTtl(seconds: number): void
   open(address: Address): void
   toast(text: string, kind?: ToastKind): void
-  modal(options: ModalOptions): void
+  modal(options: ModalOptions): Promise<void>
   confirm(options: ConfirmOptions): Promise<boolean>
   toggleLog(): void
   quit(): void
 }
-
-/** The Help modal, for /help, F1 and ? in the list. */
-export const HELP_MODAL: ModalOptions = { title: 'Help', body: HELP, width: 84 }
 
 /** Runs slash commands against the app. */
 export class Commands {
@@ -87,13 +84,13 @@ export class Commands {
         void host.session()?.fetchOlder()
         return true
       case '/address':
-        host.modal({ title: 'Your address', body: `${checksumAddress(host.address)}\n\nShare it so people can message you.` })
+        void host.modal({ title: 'Your address', body: `${checksumAddress(host.address)}\n\nShare it so people can message you.` })
         return true
       case '/log':
         host.toggleLog()
         return true
       case '/help':
-        host.modal(HELP_MODAL)
+        void host.modal(HELP_MODAL)
         return true
       case '/quit':
       case '/exit':

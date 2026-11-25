@@ -149,3 +149,33 @@ test('opening a modal cancels the one already open', async () => {
   await second
   expect(underneath.focused).toBe(true)
 })
+
+test('Alt or Ctrl with a key does not answer a confirm', async () => {
+  const answer = modals.confirm({ title: 'Clear', body: 'Sure?', action: 'Delete' })
+  setup.mockInput.pressKey('y', { meta: true })
+  setup.mockInput.pressEnter({ meta: true })
+  expect(modals.isOpen).toBe(true)
+  await setup.mockInput.typeText('n')
+  expect(await answer).toBe(false)
+})
+
+test('only a left click outside cancels, and clicks inside take no focus', async () => {
+  const answer = modals.confirm({ title: 'Clear', body: 'Sure? Click me', action: 'Delete' })
+  await frame()
+  await setup.mockMouse.click(0, 23, 2)
+  expect(modals.isOpen).toBe(true)
+  await click('Click me')
+  expect(modals.isOpen).toBe(true)
+  expect(setup.renderer.currentFocusedRenderable).toBeNull()
+  await setup.mockMouse.click(0, 23)
+  expect(await answer).toBe(false)
+})
+
+test('a modal fits its body again when the terminal is resized', async () => {
+  void modals.show({ title: 'Help', body: Array.from({ length: 12 }, (_, i) => `row ${i}`).join('\n') })
+  expect(await frame()).toContain('row 11')
+  setup.resize(80, 10)
+  expect(await frame()).not.toContain('row 11')
+  setup.resize(80, 24)
+  expect(await frame()).toContain('row 11')
+})

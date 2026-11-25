@@ -5,7 +5,8 @@ import { ConversationSession } from '../../src/client/lib/conversation-session'
 import { errorMessage } from '../../src/client/lib/errors'
 import { IDLE_MS, TerminalAttention } from '../../src/cli/attention'
 import type { ConnectionEpoch, IdentitySession } from './identity-session'
-import { Commands, HELP_MODAL, classifyInput } from './commands'
+import { Commands, classifyInput } from './commands'
+import { HELP_MODAL } from './help'
 import { Composer } from './composer'
 import { mountLayout } from './layout'
 import { Sidebar, type ConversationEntry } from './sidebar'
@@ -78,7 +79,7 @@ export class App {
       setTtl: seconds => { this.ttl = seconds; this.render() },
       open: address => this.open(address),
       toast: (text, kind) => this.toast(text, kind),
-      modal: options => void this.modals.show(options),
+      modal: options => this.modals.show(options),
       confirm: options => this.modals.confirm(options),
       toggleLog: () => this.renderer.console.toggle(),
       quit: () => this.stop(),
@@ -124,6 +125,8 @@ export class App {
     clearInterval(this.tick)
     clearTimeout(this.refreshTimer)
     this.attention.dispose()
+    // Settles a pending /clear confirmation as cancelled.
+    this.modals.close()
     this.toasts.dispose()
     this.session?.dispose()
     this.session = null
@@ -228,7 +231,8 @@ export class App {
     if (!this.conversations.some(conversation => conversation.address === partner)) {
       this.conversations.unshift({ address: partner, last_message_at: null })
     }
-    this.composer.focus()
+    // A modal keeps focus; closing it gives focus back.
+    if (!this.modals.isOpen) this.composer.focus()
     this.render()
   }
 

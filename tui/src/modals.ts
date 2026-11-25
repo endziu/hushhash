@@ -16,7 +16,6 @@ export interface ConfirmOptions {
   body: string
   /** The label of the destructive action, such as "Delete". */
   action: string
-  cancel?: string
 }
 
 export interface PromptOptions {
@@ -34,18 +33,26 @@ const DEFAULT_WIDTH = 64
 // Borders and the padding either side of the body.
 const FRAME_COLUMNS = 4
 
-interface Open {
+/** What a modal is made of, as each kind builds it. */
+interface ModalParts {
   frame: BoxRenderable
   onKey: (key: KeyEvent) => void
+  /** Gets focus while the modal is open; nothing does if absent. */
+  focus?: Renderable
+  /** Undoes anything set up outside the frame. */
+  dispose?: () => void
+}
+
+/** The modal on screen. */
+interface MountedModal extends ModalParts {
   cancel: () => void
   /** What had focus before the modal opened, to give it back on close. */
   restore: Renderable | null
 }
 
-interface Built {
-  frame: BoxRenderable
-  onKey: (key: KeyEvent) => void
-  focus?: Renderable
+/** A key without Ctrl or Alt, so Alt+y does not confirm a deletion. */
+function plain(key: KeyEvent): boolean {
+  return !key.ctrl && !key.meta
 }
 
 /**
@@ -56,16 +63,16 @@ interface Built {
  */
 export class Modals {
   private readonly backdrop: BoxRenderable
-  private current: Open | null = null
+  private current: MountedModal | null = null
 
   constructor(private readonly renderer: CliRenderer, parent: Renderable) {
     this.backdrop = new BoxRenderable(renderer, {
       position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', zIndex: 100,
       justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.backdrop, visible: false,
       onMouseDown: event => {
-        if (event.target !== this.backdrop) return
+        // Nothing in or under a modal takes focus from a click.
         event.preventDefault()
-        this.close()
+        if (event.target === this.backdrop && event.button === 0) this.close()
       },
     })
     parent.add(this.backdrop)
@@ -91,15 +98,18 @@ export class Modals {
   show({ title, body, width = DEFAULT_WIDTH }: ModalOptions): Promise<void> {
     return this.present<void>(undefined, finish => {
       const frame = this.frame(title, '↑/↓ scroll · Esc close', width)
-      const scroll = new ScrollBoxRenderable(this.renderer, {
-        height: wrappedRows(body, this.innerWidth(width)), flexShrink: 1, minHeight: 1,
-      })
-      scroll.add(new TextRenderable(this.renderer, { content: body, wrapMode: 'word', fg: COLORS.text }))
+      const rows = () => wrappedRows(body, this.innerWidth(width))
+      const scroll = new ScrollBoxRenderable(this.renderer, { height: rows(), flexShrink: 1, minHeight: 1 })
+      const fit = () => { scroll.height = rows() }
+      this.renderer.on('resize', fit)
+      scroll.add(this.text(body))
       frame.add(scroll)
       return {
         frame,
+        dispose: () => this.renderer.off('resize', fit),
         onKey: key => {
           key.preventDefault()
+          if (!plain(key)) return
           if (key.name === 'escape' || key.name === 'return' || key.name === 'q') finish()
           else if (key.name === 'up') scroll.scrollBy(-1)
           else if (key.name === 'down') scroll.scrollBy(1)
@@ -114,12 +124,12 @@ export class Modals {
    * Asks before a destructive action; true if it was chosen. Cancel is
    * selected first, so a stray Enter does nothing harmful.
    */
-  confirm({ title, body, action, cancel = 'Cancel' }: ConfirmOptions): Promise<boolean> {
+  confirm({ title, body, action }: ConfirmOptions): Promise<boolean> {
     return this.present(false, finish => {
       const frame = this.frame(title, '←/→ choose · Enter · y/n · Esc cancel')
-      frame.add(new TextRenderable(this.renderer, { content: body, wrapMode: 'word', fg: COLORS.text }))
+      frame.add(this.text(body))
       const row = new BoxRenderable(this.renderer, { flexDirection: 'row', justifyContent: 'flex-end', gap: 2, marginTop: 1, flexShrink: 0 })
-      const labels = [cancel, action]
+      const labels = ['Cancel', action]
       let selected = 0
       const buttons = labels.map((_, index) => new TextRenderable(this.renderer, {
         content: '',
@@ -139,6 +149,7 @@ export class Modals {
         frame,
         onKey: key => {
           key.preventDefault()
+          if (!plain(key)) return
           if (key.name === 'escape' || key.name === 'n') finish(false)
           else if (key.name === 'y') finish(true)
           else if (key.name === 'return') finish(selected === 1)
@@ -152,7 +163,7 @@ export class Modals {
   prompt({ title, label, value = '', placeholder, action = 'save', validate }: PromptOptions): Promise<string | null> {
     return this.present<string | null>(null, finish => {
       const frame = this.frame(title, `Enter ${action} · Esc cancel`)
-      if (label) frame.add(new TextRenderable(this.renderer, { content: label, wrapMode: 'word', fg: COLORS.text, marginBottom: 1 }))
+      if (label) frame.add(this.text(label, { marginBottom: 1 }))
       const input = new InputRenderable(this.renderer, {
         value, placeholder, width: '100%', flexShrink: 0,
         textColor: COLORS.text, focusedTextColor: COLORS.text, placeholderColor: COLORS.muted,
@@ -180,38 +191,55 @@ export class Modals {
     })
   }
 
-  private present<T>(cancelled: T, build: (finish: (value: T) => void) => Built): Promise<T> {
+  private present<T>(cancelled: T, build: (finish: (value: T) => void) => ModalParts): Promise<T> {
     return new Promise(resolve => {
       let settled = false
       const finish = (value: T) => {
         if (settled) return
         settled = true
-        this.unmount(built.frame)
+        this.unmount(parts.frame)
         resolve(value)
       }
-      const built = build(finish)
-      this.mount({ frame: built.frame, onKey: built.onKey, cancel: () => finish(cancelled), restore: null }, built.focus)
+      const parts = build(finish)
+      this.mount({ ...parts, cancel: () => finish(cancelled), restore: null })
     })
   }
 
-  private mount(open: Open, focus: Renderable | undefined): void {
-    this.close()
-    open.restore = this.renderer.currentFocusedRenderable
-    open.restore?.blur()
-    this.backdrop.add(open.frame)
+  private mount(modal: MountedModal): void {
+    // Hand focus straight over from a modal being replaced, not back underneath first.
+    const replaced = this.current
+    if (replaced) {
+      this.current = null
+      modal.restore = replaced.restore
+      this.dismantle(replaced)
+      replaced.cancel()
+    } else {
+      modal.restore = this.renderer.currentFocusedRenderable
+      modal.restore?.blur()
+    }
+    this.backdrop.add(modal.frame)
     this.backdrop.visible = true
-    this.current = open
-    focus?.focus()
+    this.current = modal
+    modal.focus?.focus()
   }
 
   private unmount(frame: BoxRenderable): void {
     const current = this.current
     if (current?.frame !== frame) return
     this.current = null
-    this.backdrop.remove(frame)
-    frame.destroyRecursively()
+    this.dismantle(current)
     this.backdrop.visible = false
     if (current.restore && !current.restore.isDestroyed) current.restore.focus()
+  }
+
+  private dismantle(modal: MountedModal): void {
+    modal.dispose?.()
+    this.backdrop.remove(modal.frame)
+    modal.frame.destroyRecursively()
+  }
+
+  private text(content: string | StyledText, options: { marginBottom?: number } = {}): TextRenderable {
+    return new TextRenderable(this.renderer, { content, wrapMode: 'word', fg: COLORS.text, ...options })
   }
 
   private frame(title: string, hints: string, width = DEFAULT_WIDTH): BoxRenderable {
