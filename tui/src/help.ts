@@ -1,0 +1,22 @@
+/** The keys and commands, shown by /help and on the empty screen. */
+export const HELP = [
+  'Keys',
+  '  Enter              send',
+  '  Alt+Enter, Ctrl+J  new line (Shift+Enter too, where the terminal reports it)',
+  '  Tab                switch between list and composer',
+  '  Click              open a conversation from the list',
+  '  PageUp/PageDown    scroll (PageUp at the top loads older)',
+  '  Ctrl+C             quit',
+  '',
+  'Commands',
+  '  /open ADDRESS      start or switch conversation (also /new)',
+  '  /ttl [5m|300]      lifetime of new messages',
+  '  /clear             delete all messages for both of you',
+  '  /retry             retry loading or opening',
+  '  /older             load older messages',
+  '  /address           show your address',
+  '  /log               toggle the debug log',
+  '  /help              show or hide this help',
+  '  /quit              quit (also /exit)',
+  '  //text             send text that starts with /',
+].join('\n')

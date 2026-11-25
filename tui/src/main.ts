@@ -8,7 +8,8 @@ import { DEFAULT_IDENTITY_HELP, defaultIdentityPath, loadIdentity } from '../../
 import { terminalText } from '../../src/cli/terminal-text'
 import { FALLBACK_MESSAGE_LIFETIME } from '../../src/client/lib/message-lifetime'
 import { IdentitySession } from './identity-session'
-import { App, LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './app'
+import { App } from './app'
+import { LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './lifetime'
 
 const HELP = `hushhash TUI — full-screen encrypted chat with a hushhash server
 
