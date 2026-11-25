@@ -53,6 +53,18 @@ encrypted text chat with browser identities, live updates, key import/export,
 and scriptable send/read commands with JSON output. See [the CLI guide](docs/cli.md)
 or `bun run cli --help`.
 
+## Full-screen terminal client
+
+`tui/` holds a separate full-screen client built with [OpenTUI](https://opentui.com/docs/). It
+uses the CLI's identity file. After the install below and `bun run cli --server prod init`:
+
+```sh
+cd tui && bun install
+bun run start --server prod
+```
+
+See [tui/README.md](tui/README.md).
+
 ## Install
 
 ```sh

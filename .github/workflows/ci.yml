@@ -42,3 +42,11 @@ jobs:
 
       - name: Test
         run: bun run test
+
+      - name: Install TUI dependencies
+        working-directory: tui
+        run: sfw bun install --frozen-lockfile
+
+      - name: TUI typecheck, lint, test
+        working-directory: tui
+        run: bun run typecheck && bun run lint && bun run test
