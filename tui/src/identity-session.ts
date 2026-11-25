@@ -4,12 +4,9 @@ import { CLIENT_UPDATE_REQUIRED_CODE } from '../../src/shared/api-error'
 import { parseLiveEvent, type LiveEvent } from '../../src/shared/live-events'
 import { ApiError, ProtocolClient, readApiError, sealMessage, unsealMessage, type Conversation, type DecryptedMessage } from '../../src/shared/protocol-client'
 import type { ConversationProtocol, SessionOptions } from '../../src/client/lib/conversation-session'
+import { AttentionReporter } from '../../src/cli/attention'
 import { setTimeout as delay } from 'node:timers/promises'
 
-// Push suppression lapses 45 s after the last report of an attentive stream.
-const ATTENTION_HEARTBEAT_MS = 20_000
-// Focus flips quickly when switching windows; report it once settled.
-const ATTENTION_SETTLE_MS = 300
 // The server pings every 30 s; a silent stream is dead.
 const READ_TIMEOUT_MS = 65_000
 const MAX_BACKOFF_MS = 30_000
@@ -46,11 +43,9 @@ export class IdentitySession {
   readonly signal = this.controller.signal
   private requestSignal: AbortSignal | undefined = this.signal
 
-  private attentive = true
-  private stream: string | null = null
-  private attentionSequence = 0
-  private reported: boolean | null = null
-  private settle: ReturnType<typeof setTimeout> | undefined
+  private readonly attention = new AttentionReporter((stream, attentive, sequence) => this.authenticated(token => this.api.request('/api/events/attention', {
+    method: 'POST', body: { stream, attentive, sequence }, token,
+  })))
 
   constructor(readonly origin: string, readonly identity: Keypair) {
     this.api = new ProtocolClient(origin, (path, init) => {
@@ -71,6 +66,7 @@ export class IdentitySession {
 
   stop(reason?: unknown): void {
     this.controller.abort(reason)
+    this.attention.dispose()
   }
 
   private stopIfOutdated(error: ApiError): Error | void {
@@ -135,31 +131,11 @@ export class IdentitySession {
 
   /** The terminal gained or lost focus. */
   setAttention(attentive: boolean): void {
-    this.attentive = attentive
-    clearTimeout(this.settle)
-    this.settle = setTimeout(() => {
-      if (this.attentive !== this.reported) this.sendAttention(this.attentive)
-    }, ATTENTION_SETTLE_MS)
-  }
-
-  private sendAttention(attentive: boolean): void {
-    const stream = this.stream
-    if (!stream || this.signal.aborted) return
-    this.reported = attentive
-    const sequence = ++this.attentionSequence
-    void this.authenticated(token => this.api.request('/api/events/attention', {
-      method: 'POST', body: { stream, attentive, sequence }, token,
-    })).catch(() => {
-      // Unknown to the server now; the next change or heartbeat resends.
-      if (this.stream === stream && this.reported === attentive) this.reported = null
-    })
+    this.attention.set(attentive)
   }
 
   /** Keeps a live event stream open, reconnecting with backoff, until stop(). */
   async live(handlers: LiveHandlers): Promise<void> {
-    const heartbeat = setInterval(() => {
-      if (this.attentive || this.attentive !== this.reported) this.sendAttention(this.attentive)
-    }, ATTENTION_HEARTBEAT_MS)
     let backoff = 1000
     try {
       while (!this.signal.aborted) {
@@ -174,8 +150,6 @@ export class IdentitySession {
           if (!this.signal.aborted) throw new Error('Live connection closed')
         } catch (error) {
           if (this.signal.aborted) return
-          this.stream = null
-          this.reported = null
           if (opened) handlers.connection(null)
           handlers.status(`${error instanceof Error ? error.message : 'Connection failed'}; reconnecting in ${backoff / 1000}s`)
           await delay(backoff, undefined, { signal: this.signal }).catch(() => {})
@@ -183,16 +157,14 @@ export class IdentitySession {
         }
       }
     } finally {
-      clearInterval(heartbeat)
-      clearTimeout(this.settle)
-      this.stream = null
+      this.attention.dispose()
     }
   }
 
   private async *events(onOpen: () => void): AsyncGenerator<LiveEvent> {
     const sseToken = await this.authenticated(token => this.api.sseToken(token))
     const controller = new AbortController()
-    const dialed = this.attentive
+    const dialed = this.attention.attentive
     const connectTimer = setTimeout(() => controller.abort(), 15_000)
     let response: Response
     try {
@@ -207,11 +179,7 @@ export class IdentitySession {
       controller.abort()
       throw new Error(`Live connection failed: HTTP ${response.status}`)
     }
-    this.stream = sseToken
-    this.attentionSequence = 0
-    // The URL told the server; report only a change since dialing.
-    this.reported = dialed
-    if (this.attentive !== dialed) this.sendAttention(this.attentive)
+    this.attention.opened(sseToken, dialed)
     onOpen()
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -236,6 +204,7 @@ export class IdentitySession {
         if (buffer.length > MAX_FRAME_BYTES) throw new Error('Live event exceeds message size limit')
       }
     } finally {
+      this.attention.closed()
       controller.abort()
       await reader.cancel().catch(() => {})
       reader.releaseLock()

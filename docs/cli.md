@@ -45,14 +45,37 @@ If you originally supplied `--identity FILE`, supply it again when registering.
 
 The partner must register on the same server, using either the browser or CLI.
 Inside chat, Enter sends, `/ttl 60` changes the lifetime of subsequent messages,
-`/help` shows commands, and `/quit` or Ctrl-C exits. Long messages wrap to the
-terminal width. Chat shows recent messages that fit the terminal; use `read --all`
+`/help` shows commands, and `/quit` or Ctrl-C exits. A paste stays in the prompt
+until Enter, with each of its line breaks shown as `↵`, and is sent as one
+message with its line breaks; Alt+Enter adds a line break too. A `↵` you type is
+sent as a line break, and a message that spans lines is never a command. Pasting
+needs a terminal with bracketed paste, which nearly all modern terminals have;
+without it, each pasted line arrives as Enter and is sent on its own. Long
+messages wrap to the terminal width. Chat shows recent messages that fit the terminal; use `read --all`
 to retrieve the rest.
 
 Chat uses the terminal's alternate screen, removes expired messages from its
 display (and all of them when either side clears the conversation), and restores
 the previous screen on exit. Message input history is not
 saved. Incoming control sequences are escaped before rendering.
+
+### Attention and push notifications
+
+Chat treats terminal attention the way the browser treats window focus. While
+the terminal is attentive, chat opens incoming messages (their lifetime starts)
+and suppresses push notifications to your other devices. While it is away, new
+messages stay unopened and hidden, push notifications go through, and the
+header shows `away: new messages stay unopened`; they are opened and shown when
+you come back. Messages already opened elsewhere are still shown.
+
+Once the terminal reports focus, focus alone decides. Until it does (some
+terminals never report it, such as tmux without `focus-events on`, or screen),
+chat is attentive at start and for 5 minutes after each key press, then goes
+away. Press any key to come back. In tmux, set `focus-events on`.
+
+`watch` is for scripts and background terminals, not for a person looking at
+the screen: it opens every message it prints, but never suppresses push
+notifications.
 
 ## Two identities on one machine
 
@@ -142,8 +165,9 @@ conversation participants before decryption.
 ## Current scope
 
 Text messaging, identity import/export, conversation listing, history, and live
-chat are supported. Push notifications, local conversation labels, and identity
-deletion are not implemented in the CLI.
+chat are supported. The CLI cannot subscribe to push notifications, but chat
+suppresses them while attentive (see above). Local conversation labels and
+identity deletion are not implemented in the CLI.
 
 The server starts the signed lifetime at the first authenticated opening; an
 unopened message expires 24 hours after acceptance. See
@@ -190,7 +214,9 @@ output cannot be recalled from terminal logs or downstream scripts.
 
 The client library's `decode` only verifies and decrypts a delivery; its output is
 not an opening confirmation. `read`, `watch`, and interactive `chat` confirm
-incoming messages before displaying plaintext. Live expiry updates apply the
+incoming messages before displaying plaintext; an away `chat` checks the
+availability of messages already opened and holds unopened ones until attention
+returns. Live expiry updates apply the
 authoritative deadline to the active terminal view; text watch never repeats
 plaintext for an update, while JSON watch emits a metadata-only `expiry-update`
 event.

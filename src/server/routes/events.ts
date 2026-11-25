@@ -113,9 +113,10 @@ export async function handleSSE({ url, ip }: Context): Promise<Response> {
   }
 
   sseTokenStore.consume(sseToken); // single-use
-  // Older clients and the CLI keep the existing push-suppression behavior.
+  // A stream that does not say keeps suppressing push, as older browsers expect.
+  // Terminal clients always say: CLI watch dials false, chat and the TUI report attention.
   const suppressPush = url.searchParams.get('attentive') !== 'false';
-  // Only explicit browser attention counts; a legacy/terminal connection alone does not.
+  // Only a stream that says it is attentive counts (a browser, CLI chat or the TUI); a legacy connection alone does not.
   if (url.searchParams.get('attentive') === 'true') recordDailyActivity(address);
 
   const ping = new TextEncoder().encode(`event: ping\ndata: {}\n\n`);
