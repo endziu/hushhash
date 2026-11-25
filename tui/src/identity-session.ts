@@ -16,7 +16,8 @@ export type LiveStatus =
   | { state: 'connected' }
   /**
    * The last attempt failed for `reason`; the next starts at `retryAt`
-   * (Date.now() time). `failures` counts the attempts that failed in a row.
+   * (Date.now() time) and stays in this state until it opens or fails.
+   * `failures` counts the attempts that failed in a row.
    */
   | { state: 'retrying', reason: string, retryAt: number, failures: number }
 
@@ -70,7 +71,8 @@ export class IdentitySession extends ChatClient {
     let failures = 0
     while (!this.signal.aborted) {
       let opened = false
-      handlers.status({ state: 'connecting' })
+      // A retry stays `retrying`, so offline and its reason stay on screen.
+      if (failures === 0) handlers.status({ state: 'connecting' })
       try {
         for await (const frame of this.events(this.signal, () => {
           opened = true

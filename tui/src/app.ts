@@ -68,8 +68,8 @@ export class App {
     this.statusBar = new StatusBar(renderer, identity.address, options.server)
     this.hintBar = new HintBar(renderer)
     const root = mountLayout(renderer, {
-      header: this.statusBar.view, sidebar: this.sidebar.view, pane: this.transcript.view,
-      composer: this.composer.view, footer: this.hintBar.view,
+      statusBar: this.statusBar.view, sidebar: this.sidebar.view, pane: this.transcript.view,
+      composer: this.composer.view, hintBar: this.hintBar.view,
     }, () => this.attention.input())
     this.modals = new Modals(renderer, root, () => this.renderHints())
     this.composer.onFocusChange(() => this.renderHints())

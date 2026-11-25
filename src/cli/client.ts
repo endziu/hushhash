@@ -68,9 +68,16 @@ export function applyExpiryUpdate(message: PlainMessage, update: ExpiryUpdate): 
   return true
 }
 
+/** The servers `--server` knows by name. */
+const SERVER_ALIASES: Record<string, string> = { prod: 'https://hushhash.org', local: 'http://localhost:3000' }
+
+/** The name `--server` knows `origin` by, else its host. */
+export function serverName(origin: string): string {
+  return Object.keys(SERVER_ALIASES).find(name => SERVER_ALIASES[name] === origin) ?? new URL(origin).host
+}
+
 export function serverOrigin(value: string): string {
-  if (value === 'prod') value = 'https://hushhash.org'
-  if (value === 'local') value = 'http://localhost:3000'
+  value = SERVER_ALIASES[value] ?? value
   const url = new URL(value)
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/') {
     throw new Error('Server must be an origin, for example https://chat.example.com')

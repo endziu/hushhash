@@ -1,37 +1,37 @@
 import { TextRenderable, fg, t, type CliRenderer } from '@opentui/core'
-import { fitBar } from './bar'
+import { PRIORITY, fitBar, type Priority } from './bar'
 import { COLORS, LAYERS } from './theme'
 
-/** A key and what it does here. A lower `priority` is more important. */
+/** A key and what it does here. */
 export interface Hint {
   keys: string
   action: string
-  priority: number
+  priority: Priority
 }
 
 export const COMPOSER_HINTS: readonly Hint[] = [
-  { keys: 'Enter', action: 'send', priority: 0 },
-  { keys: 'Alt+Enter', action: 'new line', priority: 2 },
-  { keys: 'Tab', action: 'list', priority: 1 },
-  { keys: 'PgUp/PgDn', action: 'scroll', priority: 3 },
-  { keys: 'F1', action: 'help', priority: 0 },
-  { keys: 'Ctrl+C', action: 'quit', priority: 4 },
+  { keys: 'Enter', action: 'send', priority: PRIORITY.essential },
+  { keys: 'Alt+Enter', action: 'new line', priority: PRIORITY.normal },
+  { keys: 'Tab/Esc', action: 'list', priority: PRIORITY.high },
+  { keys: 'PgUp/PgDn', action: 'scroll', priority: PRIORITY.low },
+  { keys: 'F1', action: 'help', priority: PRIORITY.essential },
+  { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
 ]
 
 export const LIST_HINTS: readonly Hint[] = [
-  { keys: '↑↓', action: 'move', priority: 1 },
-  { keys: 'Enter', action: 'open', priority: 0 },
-  { keys: 'Tab', action: 'composer', priority: 1 },
-  { keys: 'PgUp/PgDn', action: 'scroll', priority: 3 },
-  { keys: '?', action: 'help', priority: 0 },
-  { keys: 'Ctrl+C', action: 'quit', priority: 4 },
+  { keys: '↑↓', action: 'move', priority: PRIORITY.high },
+  { keys: 'Enter', action: 'open', priority: PRIORITY.essential },
+  { keys: 'Tab', action: 'composer', priority: PRIORITY.high },
+  { keys: 'PgUp/PgDn', action: 'scroll', priority: PRIORITY.low },
+  { keys: '?', action: 'help', priority: PRIORITY.essential },
+  { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
 ]
 
 /** When neither the list nor the composer has focus. */
 export const UNFOCUSED_HINTS: readonly Hint[] = [
-  { keys: 'Tab', action: 'composer', priority: 0 },
-  { keys: 'F1', action: 'help', priority: 0 },
-  { keys: 'Ctrl+C', action: 'quit', priority: 4 },
+  { keys: 'Tab', action: 'composer', priority: PRIORITY.essential },
+  { keys: 'F1', action: 'help', priority: PRIORITY.essential },
+  { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
 ]
 
 /**

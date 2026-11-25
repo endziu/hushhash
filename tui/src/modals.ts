@@ -2,6 +2,7 @@ import {
   BoxRenderable, InputRenderable, InputRenderableEvents, ScrollBoxRenderable, StyledText, TextRenderable,
   bg, fg, t, type CliRenderer, type KeyEvent, type Renderable,
 } from '@opentui/core'
+import { PRIORITY } from './bar'
 import type { Hint } from './hints'
 import { COLORS, LAYERS } from './theme'
 
@@ -118,7 +119,7 @@ export class Modals {
       frame.add(scroll)
       return {
         frame,
-        hints: [{ keys: '↑↓', action: 'scroll', priority: 1 }, { keys: 'Esc', action: 'close', priority: 0 }],
+        hints: [{ keys: '↑↓', action: 'scroll', priority: PRIORITY.high }, { keys: 'Esc', action: 'close', priority: PRIORITY.essential }],
         dispose: () => this.renderer.off('resize', fit),
         onKey: key => {
           key.preventDefault()
@@ -161,10 +162,10 @@ export class Modals {
       return {
         frame,
         hints: [
-          { keys: '←→', action: 'choose', priority: 1 },
-          { keys: 'Enter', action: 'select', priority: 0 },
-          { keys: 'y', action: action.toLowerCase(), priority: 2 },
-          { keys: 'n/Esc', action: 'cancel', priority: 0 },
+          { keys: '←→', action: 'choose', priority: PRIORITY.high },
+          { keys: 'Enter', action: 'select', priority: PRIORITY.essential },
+          { keys: 'y', action: action.toLowerCase(), priority: PRIORITY.normal },
+          { keys: 'n/Esc', action: 'cancel', priority: PRIORITY.essential },
         ],
         onKey: key => {
           key.preventDefault()
@@ -199,7 +200,7 @@ export class Modals {
       frame.add(problem)
       return {
         frame,
-        hints: [{ keys: 'Enter', action, priority: 0 }, { keys: 'Esc', action: 'cancel', priority: 0 }],
+        hints: [{ keys: 'Enter', action, priority: PRIORITY.essential }, { keys: 'Esc', action: 'cancel', priority: PRIORITY.essential }],
         focus: input,
         // Everything but Esc reaches the focused input.
         onKey: key => {

@@ -26,8 +26,13 @@ export const LAYERS = {
   toasts: 200,
 }
 
+/** Runs `listener` whenever `target` gains or loses focus. */
+export function onFocusChange(target: Renderable, listener: (focused: boolean) => void): void {
+  target.on(RenderableEvents.FOCUSED, () => listener(true))
+  target.on(RenderableEvents.BLURRED, () => listener(false))
+}
+
 /** Lights `frame`'s border while `inner` has focus. */
 export function highlightOnFocus(frame: BoxRenderable, inner: Renderable): void {
-  inner.on(RenderableEvents.FOCUSED, () => { frame.borderColor = COLORS.accent })
-  inner.on(RenderableEvents.BLURRED, () => { frame.borderColor = COLORS.border })
+  onFocusChange(inner, focused => { frame.borderColor = focused ? COLORS.accent : COLORS.border })
 }

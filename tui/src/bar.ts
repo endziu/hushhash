@@ -1,9 +1,14 @@
 import { StyledText } from '@opentui/core'
 
-/** One part of a one-line bar. A lower `priority` is more important. */
+/** How much a part of a bar matters; a narrow terminal drops the later ones first. */
+export const PRIORITY = { essential: 0, high: 1, normal: 2, low: 3, lower: 4, lowest: 5 } as const
+
+export type Priority = typeof PRIORITY[keyof typeof PRIORITY]
+
+/** One part of a one-line bar. */
 export interface BarItem {
   text: StyledText
-  priority: number
+  priority: Priority
 }
 
 /**

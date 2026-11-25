@@ -1,16 +1,16 @@
 import { BoxRenderable, type CliRenderer, type Renderable } from '@opentui/core'
 
 export interface LayoutParts {
-  header: Renderable
+  statusBar: Renderable
   sidebar: Renderable
   pane: Renderable
   composer: Renderable
-  footer: Renderable
+  hintBar: Renderable
 }
 
 /**
- * Arranges the parts on screen: the header on top, the sidebar beside the
- * pane and composer, and the footer at the bottom. `onMouse` hears every
+ * Arranges the parts on screen: the status bar on top, the sidebar beside
+ * the pane and composer, and the hint bar at the bottom. `onMouse` hears every
  * click and scroll, since mouse events bubble to the root. Returns the root,
  * where overlays go so their mouse events bubble there too.
  */
@@ -26,9 +26,9 @@ export function mountLayout(renderer: CliRenderer, parts: LayoutParts, onMouse: 
   main.add(parts.composer)
   body.add(parts.sidebar)
   body.add(main)
-  root.add(parts.header)
+  root.add(parts.statusBar)
   root.add(body)
-  root.add(parts.footer)
+  root.add(parts.hintBar)
   renderer.root.add(root)
   return root
 }
