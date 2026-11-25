@@ -1,13 +1,9 @@
 import { expect, test } from 'bun:test'
 import { listItemAt, parseLifetime } from './app'
-import { safeText } from './text'
-
-test('escapes terminal controls and direction overrides but keeps newlines', () => {
-  expect(safeText('a\x1b[31mb\u009bc\rd‮e⁦f\ng\th')).toBe('a\\u001b[31mb\\u009bc\\u000dd\\u202ee\\u2066f\ng  h')
-})
 
 test('parses lifetimes as seconds or labels', () => {
   expect(parseLifetime('300')).toBe(300)
+  expect(parseLifetime('0300')).toBe(300)
   expect(parseLifetime('5m')).toBe(300)
   expect(parseLifetime('24H')).toBe(86400)
   expect(parseLifetime('7')).toBeNull()

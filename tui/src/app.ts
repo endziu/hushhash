@@ -5,22 +5,18 @@ import {
 import { checksumAddress, parseAddress, shortAddress, type Address } from '../../src/shared/address'
 import type { LiveEvent } from '../../src/shared/live-events'
 import type { DecryptedMessage } from '../../src/shared/protocol-client'
-import { MESSAGE_TTLS } from '../../src/shared/message-ttl'
 import { ConversationSession } from '../../src/client/lib/conversation-session'
 import { fmtDay, fmtRemaining, fmtTime } from '../../src/client/lib/display'
 import { errorMessage } from '../../src/client/lib/errors'
+import { MESSAGE_LIFETIMES } from '../../src/client/lib/message-lifetime'
 import { IDLE_MS, TerminalAttention } from '../../src/cli/attention'
 import type { ConnectionEpoch, IdentitySession } from './identity-session'
-import { safeText } from './text'
+import { terminalText } from '../../src/cli/terminal-text'
 
 const COLORS = {
   accent: '#7aa2f7', muted: '#737aa2', you: '#9ece6a', them: '#e0af68', error: '#f7768e', border: '#3b4261',
 }
 
-const LIFETIME_LABELS: Record<number, string> = {
-  5: '5s', 10: '10s', 30: '30s', 60: '1m', 300: '5m', 1800: '30m', 3600: '1h', 21600: '6h', 86400: '24h',
-}
-export const DEFAULT_LIFETIME = 1800
 const CLEAR_CONFIRM_MS = 10_000
 
 const HELP = [
@@ -45,17 +41,19 @@ const HELP = [
   '  //text             send text that starts with /',
 ].join('\n')
 
+/** Every supported lifetime, as one comma-separated line of labels. */
+export const LIFETIME_CHOICES_TEXT = MESSAGE_LIFETIMES.map(lifetime => lifetime.label).join(', ')
+
 export function lifetimeLabel(seconds: number): string {
-  return LIFETIME_LABELS[seconds] ?? `${seconds}s`
+  return MESSAGE_LIFETIMES.find(lifetime => lifetime.seconds === seconds)?.label ?? `${seconds}s`
 }
 
 /** Seconds for "300" or a label such as "5m"; null for anything that is not a supported lifetime. */
 export function parseLifetime(value: string): number | null {
   const trimmed = value.trim().toLowerCase()
-  const seconds = /^\d+$/.test(trimmed)
-    ? Number(trimmed)
-    : Number(Object.entries(LIFETIME_LABELS).find(([, label]) => label === trimmed)?.[0])
-  return MESSAGE_TTLS.includes(seconds) ? seconds : null
+  const numeric = /^\d+$/.test(trimmed)
+  const lifetime = MESSAGE_LIFETIMES.find(({ seconds, label }) => numeric ? seconds === Number(trimmed) : label === trimmed)
+  return lifetime?.seconds ?? null
 }
 
 // Each conversation in the list takes two rows: the address and its last activity.
@@ -124,6 +122,8 @@ export class App {
   constructor(private readonly renderer: CliRenderer, private readonly identity: IdentitySession, private readonly options: AppOptions) {
     this.ttl = options.ttl
     this.attention = new TerminalAttention(attentive => this.attentionChanged(attentive), options.idleMs ?? IDLE_MS)
+    // Like a browser window's focus: only an attentive terminal suppresses push.
+    identity.setAttention(this.attention.attentive)
     const root = new BoxRenderable(renderer, {
       width: '100%', height: '100%', flexDirection: 'column',
       // Mouse events bubble here from every renderable.
@@ -225,7 +225,7 @@ export class App {
     this.attention.dispose()
     this.session?.dispose()
     this.session = null
-    this.identity.stop()
+    this.identity.abort()
     this.renderer.keyInput.off('keypress', this.onKey)
     this.renderer.keyInput.off('paste', this.onPaste)
     this.renderer.off('focus', this.onFocus)
@@ -300,7 +300,7 @@ export class App {
 
   private async refreshConversations(): Promise<boolean> {
     try {
-      const listed = await this.identity.conversations()
+      const { conversations: listed } = await this.identity.conversations()
       if (this.stopped) return false
       const known = new Set(listed.map(conversation => conversation.address))
       // Conversations opened here stay listed before their first message.
@@ -379,9 +379,9 @@ export class App {
         return true
       }
       case '/ttl': {
-        if (!arg) { this.show(`Lifetime ${lifetimeLabel(this.ttl)}. Choose: ${MESSAGE_TTLS.map(lifetimeLabel).join(', ')}`); return true }
+        if (!arg) { this.show(`Lifetime ${lifetimeLabel(this.ttl)}. Choose: ${LIFETIME_CHOICES_TEXT}`); return true }
         const seconds = parseLifetime(arg)
-        if (seconds === null) { this.show(`Choose a lifetime: ${MESSAGE_TTLS.map(lifetimeLabel).join(', ')}`, true); return true }
+        if (seconds === null) { this.show(`Choose a lifetime: ${LIFETIME_CHOICES_TEXT}`, true); return true }
         this.ttl = seconds
         this.show(`New messages disappear ${lifetimeLabel(seconds)} after they are opened`)
         return true
@@ -425,7 +425,7 @@ export class App {
         this.stop()
         return true
       default:
-        this.show(`Unknown command ${safeText(name ?? '')}. /help lists commands; //text sends text starting with /`, true)
+        this.show(`Unknown command ${terminalText(name ?? '')}. /help lists commands; //text sends text starting with /`, true)
         return false
     }
   }
@@ -433,7 +433,7 @@ export class App {
   private render(): void {
     if (this.stopped) return
     this.header.content = t` ${fg(COLORS.accent)('hushhash')}  ${checksumAddress(this.identity.address)} ${dim('(you)')}  ${dim(this.options.server)}`
-    const connection = this.connected ? fg(COLORS.you)('● connected') : fg(COLORS.error)(`○ ${safeText(this.status)}`)
+    const connection = this.connected ? fg(COLORS.you)('● connected') : fg(COLORS.error)(`○ ${terminalText(this.status)}`)
     const focus = this.attention.attentive ? '' : '  · away: new messages stay unopened'
     this.footer.content = t` ${connection}  ${dim(`lifetime ${lifetimeLabel(this.ttl)}`)}${dim(focus)}  ${dim('· /help')}`
     this.renderList()
@@ -468,9 +468,9 @@ export class App {
     const lines: StyledText[] = []
     const problem = (text: string) => lines.push(t`${fg(COLORS.error)(text)}`)
     if (this.message) lines.push(this.message.error ? t`${fg(COLORS.error)(this.message.text)}` : t`${fg(COLORS.muted)(this.message.text)}`)
-    if (snapshot.error) problem(`${safeText(snapshot.error)} · /retry`)
+    if (snapshot.error) problem(`${terminalText(snapshot.error, { newlines: true })} · /retry`)
     if (snapshot.openingFailed) problem('Some new messages could not be opened · /retry')
-    if (snapshot.olderError) problem(`${safeText(snapshot.olderError)} · PageUp to retry`)
+    if (snapshot.olderError) problem(`${terminalText(snapshot.olderError, { newlines: true })} · PageUp to retry`)
     if (!snapshot.loading && !snapshot.error && snapshot.recipientPubkey === null) problem('This address is not registered on this server, so it cannot receive messages yet')
     if (snapshot.loading) lines.push(t`${dim('Loading…')}`)
     else if (snapshot.loadingOlder) lines.push(t`${dim('Loading older messages…')}`)
@@ -508,7 +508,7 @@ export class App {
     const left = message.opened_at === null && mine
       ? `unopened · ${fmtRemaining(message.expires_at, now)}`
       : `${fmtRemaining(message.expires_at, now)} left`
-    return t`${dim(fmtTime(message.created_at))} ${who}  ${safeText(message.plaintext)}  ${dim(left)}`
+    return t`${dim(fmtTime(message.created_at))} ${who}  ${terminalText(message.plaintext, { newlines: true })}  ${dim(left)}`
   }
 }
 

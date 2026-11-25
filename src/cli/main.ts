@@ -2,14 +2,14 @@
 import { checksumAddress, requireAddress, type Address } from '../shared/address'
 import { MESSAGE_TTLS } from '../shared/message-ttl'
 import { parseArgs } from 'node:util'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { PassThrough } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import { ChatClient, ClientUpdateRequiredError, applyExpiryUpdate, isMessageAvailable, shouldRetainMessage, serverOrigin, type PlainMessage, type MessagePage } from './client'
-import { createIdentity, loadIdentity } from './identity'
+import { DEFAULT_IDENTITY_HELP, createIdentity, defaultIdentityPath, loadIdentity } from './identity'
 import { FOCUS_REPORTING_OFF, FOCUS_REPORTING_ON, TerminalAttention } from './attention'
+import { terminalText } from './terminal-text'
 import { BRACKETED_PASTE_OFF, BRACKETED_PASTE_ON, LINE_BREAK, PasteFilter } from './paste'
 import { parseLiveEvent } from '../shared/live-events'
 import { isEnvelopeParticipant } from '../shared/message-envelope'
@@ -34,7 +34,7 @@ Options:
                            prod = https://hushhash.org
                            local = http://localhost:3000
                            Default: HUSHHASH_SERVER or local
-  --identity FILE          Default: HUSHHASH_IDENTITY or ~/.config/hushhash/identity.json
+  --identity FILE          Default: ${DEFAULT_IDENTITY_HELP}
   --ttl SECONDS            Message lifetime (default: 300)
   --json                   Machine-readable JSON (watch emits JSON lines)
   --all                    Read all available history
@@ -45,16 +45,6 @@ Lifetime choices: ${MESSAGE_TTLS.join(', ')} seconds.
 Identity files contain an unencrypted private key and are created with mode 600.
 Use a dedicated burner key. Output from read/watch can remain in terminal logs.
 `
-
-// Never let peer-controlled text send terminal commands or disguise direction.
-export function terminalText(value: string): string {
-  // eslint-disable-next-line no-control-regex -- terminal escape sequences are untrusted input
-  return value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, char => {
-    if (char === '\n') return ' ↵ '
-    if (char === '\t') return '  '
-    return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
-  })
-}
 
 function displayMessage(message: PlainMessage, identity: Address): string {
   const who = message.sender === identity ? 'you' : 'peer'
@@ -351,7 +341,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const ttl = positiveInteger(values.ttl, 'Lifetime') ?? 300
   if (!MESSAGE_TTLS.includes(ttl)) throw new Error(`Lifetime must be one of: ${MESSAGE_TTLS.join(', ')}`)
   const before = positiveInteger(values.before, 'before')
-  const identityPath = resolve(values.identity ?? process.env.HUSHHASH_IDENTITY ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'hushhash', 'identity.json'))
+  const identityPath = resolve(values.identity ?? defaultIdentityPath())
   const server = serverOrigin(values.server ?? process.env.HUSHHASH_SERVER ?? 'local')
   const output = (value: unknown, text: string) => console.log(values.json ? JSON.stringify(value) : terminalText(text))
   let identity

@@ -1,7 +1,16 @@
 import { constants } from 'node:fs'
 import { mkdir, open } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { deriveKeypair, generateKeypair, type Keypair } from '../shared/keypair'
+
+/** How help text describes where `defaultIdentityPath` looks. */
+export const DEFAULT_IDENTITY_HELP = 'HUSHHASH_IDENTITY or ~/.config/hushhash/identity.json'
+
+/** The identity file the CLI and TUI share unless --identity names another. */
+export function defaultIdentityPath(env: Record<string, string | undefined> = process.env): string {
+  return env.HUSHHASH_IDENTITY ?? join(env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'hushhash', 'identity.json')
+}
 
 export function parsePrivateKey(value: string): Keypair {
   const privateKey = value.trim().replace(/^0x/i, '')
