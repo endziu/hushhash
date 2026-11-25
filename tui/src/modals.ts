@@ -85,6 +85,11 @@ export class Modals {
     parent.add(this.backdrop)
   }
 
+  /** Repaints with the current palette; an open modal keeps the one it opened with. */
+  applyTheme(): void {
+    this.backdrop.backgroundColor = COLORS.backdrop
+  }
+
   get isOpen(): boolean {
     return this.current !== null
   }

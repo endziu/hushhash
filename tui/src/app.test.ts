@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
-import { createTestRenderer } from '@opentui/core/testing'
+import { RGBA } from '@opentui/core'
+import { createTestRenderer, setRendererCapabilities } from '@opentui/core/testing'
 import { initDb, getDb, savePushSubscription } from '../../src/server/db'
 import { createFetch } from '../../src/server/router'
 import { setPushSender } from '../../src/server/push'
@@ -10,6 +11,8 @@ import { generateKeypair } from '../../src/shared/keypair'
 import { ChatClient } from '../../src/cli/client'
 import { IdentitySession } from './identity-session'
 import { App } from './app'
+import { sidebarWidth } from './sidebar'
+import { PALETTES, setTheme, type ThemeSetting } from './theme'
 
 type Setup = Awaited<ReturnType<typeof createTestRenderer>>
 
@@ -40,13 +43,22 @@ afterEach(async () => {
   setPushSender(undefined)
   logging.mockRestore()
   getDb().close()
+  setTheme('dark')
 })
 
-async function start(partner: Address | undefined = alice.identity.address, height = 32, idleMs?: number) {
+interface StartOptions {
+  width?: number
+  theme?: ThemeSetting
+  /** Report a truecolor terminal, so avatars are drawn. */
+  truecolor?: boolean
+}
+
+async function start(partner: Address | undefined = alice.identity.address, height = 32, idleMs?: number, options: StartOptions = {}) {
   identitySession = new IdentitySession(server.url.origin, generateKeypair())
   await identitySession.login()
-  setup = await createTestRenderer({ width: 110, height })
-  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner, idleMs })
+  setup = await createTestRenderer({ width: options.width ?? 110, height })
+  if (options.truecolor) setRendererCapabilities(setup.renderer, { rgb: true })
+  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner, idleMs, theme: options.theme })
   void app.run()
   await until(() => frame().includes('● connected'), 'live connection')
 }
@@ -69,7 +81,7 @@ async function until(check: () => boolean | Promise<boolean>, description: strin
 /** Clicks the conversation list entry for `address`. */
 async function clickConversation(address: Address) {
   const lines = frame().split('\n')
-  const y = lines.findIndex(line => line.slice(0, 26).includes(shortAddress(address)))
+  const y = lines.findIndex(line => line.slice(0, listWidth()).includes(shortAddress(address)))
   if (y < 0) throw new Error(`${shortAddress(address)} is not visible in the list\n${frame()}`)
   await setup.mockMouse.click(lines[y]!.indexOf(shortAddress(address)), y)
   await setup.renderOnce()
@@ -89,8 +101,14 @@ function shownAway(): boolean {
   return / away\b/.test(statusLine())
 }
 
+/** The sidebar's columns at the current width. */
+function listWidth(): number {
+  return sidebarWidth(setup.renderer.width)
+}
+
+/** The conversation header: the line under the pane's top border. */
 function paneTitle(): string {
-  return frame().split('\n')[1]!.slice(26)
+  return frame().split('\n')[2]!.slice(listWidth())
 }
 
 function openedAt(id: string): number | null {
@@ -362,6 +380,7 @@ test('an unregistered partner is reported and a failed send keeps its text', asy
   setup.mockInput.pressEnter()
   await until(() => frame().includes('Send failed'), 'send failure')
   expect(frame()).toContain('nobody home')
+  await until(() => /nobody home\s+not sent ✗/.test(frame()), 'failed state on the message')
 })
 
 test('clicking a conversation in the list opens it', async () => {
@@ -396,7 +415,198 @@ test('clicking works after the conversation list has scrolled', async () => {
   setup.mockInput.pressEnter()
   await setup.renderOnce()
   expect(frame()).not.toContain(shortAddress(addresses.at(-1)!))
-  const target = addresses.find(address => frame().split('\n').some(line => line.slice(0, 26).includes(shortAddress(address))) && address !== addresses[0])!
+  const target = addresses.find(address => frame().split('\n').some(line => line.slice(0, listWidth()).includes(shortAddress(address))) && address !== addresses[0])!
   await clickConversation(target)
   await until(() => paneTitle().includes(checksumAddress(target)), 'clicked conversation opened')
+})
+
+/** The column where `text` first appears, and its line. */
+function locate(text: string): { line: number; column: number } {
+  const lines = frame().split('\n')
+  const line = lines.findIndex(candidate => candidate.includes(text))
+  if (line < 0) throw new Error(`${text} is not on screen\n${frame()}`)
+  return { line, column: lines[line]!.indexOf(text) }
+}
+
+/** The colour `text` is drawn in. */
+function colorOf(text: string): number[] {
+  for (const line of setup.captureSpans().lines) {
+    const span = line.spans.find(candidate => candidate.text.includes(text))
+    if (span) return span.fg.toInts()
+  }
+  throw new Error(`${text} is not on screen\n${frame()}`)
+}
+
+const ints = (hex: string) => RGBA.fromHex(hex).toInts()
+
+/** Where the pane's left border is: the second ╭ on the line under the status bar, or 0 without a sidebar. */
+function paneLeft(): number {
+  const line = frame().split('\n')[1]!
+  return line.indexOf('╭', 1) > 0 ? line.indexOf('╭', 1) : 0
+}
+
+test('your messages are on the right and theirs on the left, grouped under a day label', async () => {
+  await start()
+  await alice.send(identitySession.address, 'first from alice')
+  await alice.send(identitySession.address, 'second from alice')
+  await until(() => frame().includes('second from alice'), 'messages rendered')
+  await setup.mockInput.typeText('reply from me')
+  setup.mockInput.pressEnter()
+  await until(() => /reply from me\s+unopened 24h ○/.test(frame()), 'sent and unopened')
+
+  const middle = (listWidth() + 110) / 2
+  expect(locate('first from alice').column).toBeLessThan(middle)
+  expect(locate('reply from me').column).toBeGreaterThan(middle)
+  expect(frame()).toContain('── Today ──')
+  // Alice's two messages share one header; yours has its own.
+  const pane = frame().split('\n').map(line => line.slice(listWidth()))
+  expect(pane.filter(line => line.includes(shortAddress(alice.identity.address)))).toHaveLength(1)
+  expect(pane.filter(line => / you\b/.test(line))).toHaveLength(1)
+  const header = pane.findIndex(line => line.includes(shortAddress(alice.identity.address)))
+  expect(pane[header + 1]).toContain('first from alice')
+
+  // Once Alice opens it, it shows as opened with its lifetime.
+  await alice.read(identitySession.address)
+  await until(() => /reply from me\s+30m ✓/.test(frame()), 'opened state')
+})
+
+test('a divider marks what arrived while you were elsewhere, until you send', async () => {
+  const carol = new ChatClient(server.url.origin, generateKeypair())
+  await carol.login()
+  try {
+    await start(carol.identity.address)
+    await alice.send(identitySession.address, 'while elsewhere')
+    await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'unread marker')
+    await setup.mockInput.typeText(`/open ${alice.identity.address}`)
+    setup.mockInput.pressEnter()
+    await until(() => frame().includes('while elsewhere'), 'alice opened')
+    expect(locate('── new ──').line).toBeLessThan(locate('while elsewhere').line)
+
+    await setup.mockInput.typeText('got it')
+    setup.mockInput.pressEnter()
+    await until(() => !frame().includes('── new ──'), 'divider gone after sending')
+    expect(frame()).toContain('while elsewhere')
+  } finally {
+    await carol.close()
+  }
+})
+
+test('at 60×20 the list and the conversation take turns on screen', async () => {
+  await start(undefined, 20, undefined, { width: 60 })
+  expect(frame()).toContain('← conversations')
+  expect(frame()).not.toContain(' Conversations ')
+  expect(paneLeft()).toBe(0)
+
+  setup.mockInput.pressTab()
+  await until(() => frame().includes(' Conversations '), 'list screen')
+  expect(frame()).not.toContain('Write a message')
+  // The list takes the whole width.
+  expect(frame().split('\n')[1]!.trimEnd().length).toBe(60)
+  expect(hintLine()).toContain('Enter open')
+
+  setup.mockInput.pressEscape()
+  await until(() => frame().includes('Write a message'), 'back to the conversation')
+  expect(frame()).not.toContain(' Conversations ')
+  setup.mockInput.pressKey('b', { ctrl: true })
+  await until(() => frame().includes(' Conversations '), 'Ctrl+B switches screens too')
+})
+
+test('at 100×30 and 180×50 the sidebar scales, and Ctrl+B hides it', async () => {
+  await start(undefined, 30, undefined, { width: 100 })
+  expect(paneLeft()).toBe(sidebarWidth(100))
+  expect(frame()).not.toContain('← conversations')
+
+  setup.mockInput.pressKey('b', { ctrl: true })
+  await until(() => paneLeft() === 0, 'sidebar hidden')
+  expect(frame()).toContain('← conversations')
+  setup.mockInput.pressKey('b', { ctrl: true })
+  await until(() => paneLeft() === sidebarWidth(100), 'sidebar shown again')
+
+  setup.resize(180, 50)
+  await until(() => paneLeft() === sidebarWidth(180), 'wider sidebar')
+  expect(sidebarWidth(180)).toBe(36)
+  expect(sidebarWidth(100)).toBe(25)
+})
+
+test('resizing keeps focus, the draft and the scroll position', async () => {
+  await start(undefined, 30, undefined, { width: 100 })
+  for (let index = 1; index <= 30; index++) await alice.send(identitySession.address, `line ${index} of many`)
+  await until(() => frame().includes('line 30 of many'), 'messages rendered')
+  setup.mockInput.pressKey('\x1b[5~')
+  await until(() => !frame().includes('line 30 of many'), 'scrolled up')
+  const shown = frame().match(/line (\d+) of many/)![1]
+  await setup.mockInput.typeText('half typed')
+
+  setup.resize(60, 20)
+  await until(() => frame().includes('← conversations'), 'collapsed')
+  expect(frame()).not.toContain('line 30 of many')
+  await setup.mockInput.typeText(' more')
+  await until(() => frame().includes('half typed more'), 'composer kept focus')
+
+  setup.resize(100, 30)
+  await until(() => paneLeft() === sidebarWidth(100), 'expanded again')
+  expect(frame()).toContain('half typed more')
+  expect(frame()).not.toContain('line 30 of many')
+  expect(frame()).toContain(`line ${shown} of many`)
+}, 15_000)
+
+test('the composer grows with its text up to eight lines', async () => {
+  await start()
+  const composerRows = () => {
+    const lines = frame().split('\n')
+    const bottom = lines.findLastIndex(line => line.includes('╰'))
+    const top = lines.findLastIndex((line, index) => index < bottom && line.slice(listWidth()).includes('╭'))
+    return bottom - top - 1
+  }
+  expect(composerRows()).toBe(1)
+  await setup.mockInput.typeText('one')
+  setup.mockInput.pressEnter({ meta: true })
+  await setup.mockInput.typeText('two')
+  setup.mockInput.pressEnter({ meta: true })
+  await setup.mockInput.typeText('three')
+  await until(() => composerRows() === 3, 'three lines')
+  for (let index = 0; index < 8; index++) {
+    setup.mockInput.pressEnter({ meta: true })
+    await setup.mockInput.typeText(`more ${index}`)
+  }
+  await until(() => composerRows() === 8, 'capped at eight')
+  setup.mockInput.pressEnter()
+  await until(() => composerRows() === 1, 'back to one line after sending')
+})
+
+test('the palette follows the terminal under system, and /theme overrides it', async () => {
+  await start()
+  expect(colorOf('hushhash')).toEqual(ints(PALETTES.dark.accent))
+  setup.renderer.emit('theme_mode', 'light')
+  await until(() => colorOf('hushhash').join() === ints(PALETTES.light.accent).join(), 'light palette')
+  expect(colorOf('Write a message')).toEqual(ints(PALETTES.light.muted))
+
+  await setup.mockInput.typeText('/theme dark')
+  setup.mockInput.pressEnter()
+  await until(() => colorOf('hushhash').join() === ints(PALETTES.dark.accent).join(), 'dark despite the terminal')
+  setup.renderer.emit('theme_mode', 'light')
+  await setup.renderOnce()
+  expect(colorOf('hushhash')).toEqual(ints(PALETTES.dark.accent))
+
+  await setup.mockInput.typeText('/theme system')
+  setup.mockInput.pressEnter()
+  await until(() => colorOf('hushhash').join() === ints(PALETTES.light.accent).join(), 'following the terminal again')
+})
+
+test('--theme light starts in the light palette', async () => {
+  await start(undefined, 32, undefined, { theme: 'light' })
+  expect(colorOf('hushhash')).toEqual(ints(PALETTES.light.accent))
+})
+
+test('avatars show in the list, the header and the status bar where colours allow', async () => {
+  await start(undefined, 32, undefined, { truecolor: true })
+  await alice.send(identitySession.address, 'hi')
+  await until(() => frame().includes(`▀▀▀▀ ${shortAddress(alice.identity.address)}`), 'avatar in the list')
+  expect(frame()).toContain(`▀▀▀▀ ${checksumAddress(alice.identity.address)}`)
+  expect(statusLine()).toContain(`▀▀▀▀ ${shortAddress(identitySession.address)}`)
+})
+
+test('a terminal without 256 colours shows no avatars', async () => {
+  await start()
+  expect(frame()).not.toContain('▀')
 })

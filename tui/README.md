@@ -17,15 +17,17 @@ bun run start --server prod 0xPARTNER_ADDRESS   # open a conversation at start
 
 `--server`, `--identity`, `HUSHHASH_SERVER` and `HUSHHASH_IDENTITY` work as in the
 [CLI](../docs/cli.md), so the TUI and CLI share one identity. `--ttl 5m` sets the lifetime of sent
-messages (default 30m, as in the browser).
+messages (default 30m, as in the browser). `--theme light`, `--theme dark` or the default
+`--theme system` picks the colours; `system` follows the terminal's background and changes with it
+where the terminal reports that.
 
 ## Use
 
 The top line shows the live connection (`● connected`, `◐ reconnecting in 4s` with a countdown to
 the next attempt, or `○ offline` after three failed attempts in a row, with the reason when it
 fits), the server (`prod`, `local` or its host), the lifetime of new messages, `away` while you
-are away (see [Attention](#attention)) and your address in short form; `/address` shows it in
-full. The bottom line shows the keys that work where you are: the composer, the conversation list
+are away (see [Attention](#attention)) and your avatar and address in short form; `/address`
+shows it in full. The bottom line shows the keys that work where you are: the composer, the conversation list
 or an open dialog. A narrow terminal drops the less important parts of both lines first.
 
 | Key | Action |
@@ -34,13 +36,14 @@ or an open dialog. A narrow terminal drops the less important parts of both line
 | Shift+Enter, Alt+Enter, Ctrl+J | New line (Shift+Enter needs a terminal that reports it) |
 | Tab | Switch between the conversation list and the composer |
 | Esc | Go to the conversation list; in a dialog, close it |
+| Ctrl+B | Hide or show the conversation list; in a narrow terminal, switch screens |
 | F1, or ? in the list | Help |
 | Enter in the list | Open that conversation |
 | Click in the list | Open that conversation; the mouse wheel moves the highlight |
 | PageUp / PageDown | Scroll; PageUp at the top loads older messages |
 | Ctrl+C | Quit |
 
-Commands typed in the composer: `/open ADDRESS` (or `/new`), `/ttl [5m|300]`, `/clear` (asks in a
+Commands typed in the composer: `/open ADDRESS` (or `/new`), `/ttl [5m|300]`, `/theme [system|light|dark]`, `/clear` (asks in a
 dialog first), `/retry`, `/older`, `/address`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
 single line; multi-line text that starts with `/` is sent as a message. Start a one-line message
 with `//` to send text that begins with `/`; multi-line text is sent as typed. A mistyped command
@@ -54,6 +57,27 @@ Command results and errors appear in the top-right corner and disappear after a 
 (errors after eight); click one to dismiss it. Problems with the open conversation, such as an
 address that is not registered or messages that could not be opened, stay at the top of the pane
 until they are fixed.
+
+Your messages are on the right and your partner's on the left. Messages from the same sender a
+few minutes apart share one header with the sender and time, days are labelled (`── Today ──`),
+and `── new ──` marks the first message that arrived since you last looked at the conversation,
+until you send or switch away. Each message shows its time left, which turns amber in its last
+fifth and red in its last 10 seconds, when the text fades. Your own also show their state:
+
+| Icon | Meaning |
+|---|---|
+| `◌` | Sending |
+| `○` | Delivered, not opened yet. The time shown is the 24h limit an unopened message waits, labelled `unopened`; its lifetime starts when it is opened |
+| `✓` | Opened; the time shown is how long until it disappears |
+| `✗` | Not sent. Its text goes back to the composer if that is empty; it may still have arrived, so check before resending |
+
+Conversations and your status show a small mosaic avatar, the same one the browser draws for that
+address, so similar short addresses differ at a glance. Terminals without at least 256 colours
+show none.
+
+Below 70 columns, or after Ctrl+B, the list is a screen of its own: Tab or Esc switches between it
+and the conversation, whose header says `← conversations`. Otherwise the sidebar widens with the
+terminal, from 24 to 36 columns. The composer grows with its text up to eight lines.
 
 A `●` in the list marks a conversation with messages that arrived while another was open. It is
 kept in memory only.

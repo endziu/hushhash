@@ -5,10 +5,11 @@ export type ToastKind = 'info' | 'success' | 'error'
 
 const DURATION_MS: Record<ToastKind, number> = { info: 4000, success: 4000, error: 8000 }
 const MAX_TOASTS = 4
-const STYLE: Record<ToastKind, { color: string; icon: string }> = {
-  info: { color: COLORS.accent, icon: 'ℹ' },
-  success: { color: COLORS.you, icon: '✓' },
-  error: { color: COLORS.error, icon: '✗' },
+// Functions, so a toast takes the palette in use when it shows.
+const STYLE: Record<ToastKind, { color: () => string; icon: string }> = {
+  info: { color: () => COLORS.accent, icon: 'ℹ' },
+  success: { color: () => COLORS.ok, icon: '✓' },
+  error: { color: () => COLORS.error, icon: '✗' },
 }
 
 /**
@@ -33,7 +34,8 @@ export class Toasts {
   }
 
   show(text: string, kind: ToastKind = 'info'): void {
-    const { color, icon } = STYLE[kind]
+    const icon = STYLE[kind].icon
+    const color = STYLE[kind].color()
     const toast = new BoxRenderable(this.renderer, {
       maxWidth: 60, paddingX: 1, flexShrink: 0,
       border: true, borderStyle: 'rounded', borderColor: color, backgroundColor: COLORS.surface,
