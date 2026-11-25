@@ -26,6 +26,12 @@ test('markers and line breaks split across reads are reassembled', () => {
   expect(filter.pending).toBe(false)
 })
 
+test('a CRLF split across reads does not swallow the next line break', () => {
+  const filter = new PasteFilter()
+  const chunks = [`${START}a\r`, '\n', `\nb${END}`]
+  expect(chunks.map(chunk => filter.write(chunk)).join('')).toBe(`a${B}${B}b`)
+})
+
 test('held input that is not a marker is released by flush', () => {
   const filter = new PasteFilter()
   expect(filter.write('a\x1b')).toBe('a')

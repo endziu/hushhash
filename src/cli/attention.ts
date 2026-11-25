@@ -18,7 +18,7 @@ export const FOCUS_REPORTING_OFF = '\x1b[?1004l'
  * attention, and suppress push, forever.
  */
 export class TerminalAttention {
-  /** Starting the TUI counts as input. */
+  /** Starting the client counts as input. */
   attentive = true
   private reportsFocus = false
   private idle: ReturnType<typeof setTimeout> | undefined

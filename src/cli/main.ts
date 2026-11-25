@@ -114,8 +114,10 @@ async function follow(
   const held = new Map<string, PlainMessage>()
   const hold = (message: PlainMessage) => { if (!seen.has(message.id)) held.set(message.id, message) }
   const holding = () => attention !== undefined && !attention.attentive()
+  // Releasing mid-history would open messages the history check then drops; sync releases at its end.
+  let synced = false
   const release = async () => {
-    if (signal.aborted || holding() || !held.size) return
+    if (signal.aborted || !synced || holding() || !held.size) return
     const messages = [...held.values()].filter(isMessageAvailable)
     held.clear()
     try {
@@ -131,7 +133,7 @@ async function follow(
   let backoff = 1000
   while (!signal.aborted) {
     try {
-      let synced = false
+      synced = false
       for await (const frame of client.events(signal)) {
         if (signal.aborted) return
         for (const [id, message] of seen) {
@@ -221,7 +223,6 @@ async function chat(client: ChatClient, partner: Address, ttl: number): Promise<
     // A lone Escape, or a marker whose rest never comes, is released shortly.
     if (paste.pending) flushTimer = setTimeout(() => forward(paste.flush()), 50)
   }
-  process.stdin.setRawMode(true)
   process.stdin.on('data', onData)
   const rl = createInterface({ input, output: process.stdout, terminal: true, historySize: 0 })
   let status = 'Connecting…'
@@ -235,7 +236,15 @@ async function chat(client: ChatClient, partner: Address, ttl: number): Promise<
     render()
   })
   client.setAttention(attention.attentive)
-  process.stdout.write('\x1b[?1049h' + FOCUS_REPORTING_ON + BRACKETED_PASTE_ON)
+  const enterTerminal = () => {
+    process.stdin.setRawMode(true)
+    process.stdout.write('\x1b[?1049h' + FOCUS_REPORTING_ON + BRACKETED_PASTE_ON)
+  }
+  const leaveTerminal = () => {
+    process.stdin.setRawMode(false)
+    process.stdout.write(BRACKETED_PASTE_OFF + FOCUS_REPORTING_OFF + '\x1b[?1049l')
+  }
+  enterTerminal()
   const render = () => {
     for (const [id, message] of messages) {
       if (!shouldRetainMessage(message)) messages.delete(id)
@@ -266,6 +275,12 @@ async function chat(client: ChatClient, partner: Address, ttl: number): Promise<
   }
   input.on('keypress', onKeypress)
   rl.on('SIGINT', () => client.abort())
+  // readline reads a PassThrough, so on Ctrl-Z it cannot hand the real terminal back to the shell itself.
+  rl.on('SIGTSTP', () => {
+    leaveTerminal()
+    process.once('SIGCONT', () => { enterTerminal(); render() })
+    process.kill(process.pid, 'SIGTSTP')
+  })
   rl.on('close', () => client.abort())
   let pendingSend = Promise.resolve()
   rl.on('line', prompt => {
@@ -309,9 +324,8 @@ async function chat(client: ChatClient, partner: Address, ttl: number): Promise<
     rl.close()
     clearTimeout(flushTimer)
     process.stdin.off('data', onData)
-    process.stdin.setRawMode(false)
+    leaveTerminal()
     process.stdin.pause()
-    process.stdout.write(BRACKETED_PASTE_OFF + FOCUS_REPORTING_OFF + '\x1b[?1049l')
     await pendingSend
   }
 }

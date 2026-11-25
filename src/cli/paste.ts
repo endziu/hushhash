@@ -61,7 +61,10 @@ export class PasteFilter {
 
   private pasted(text: string): string {
     // A CRLF split across reads is still one line break.
-    if (this.afterCarriageReturn && text.startsWith('\n')) text = text.slice(1)
+    if (this.afterCarriageReturn && text.startsWith('\n')) {
+      text = text.slice(1)
+      this.afterCarriageReturn = false
+    }
     if (text) this.afterCarriageReturn = text.endsWith('\r')
     // eslint-disable-next-line no-control-regex -- pasted control characters would act as key presses
     return text.replace(/\r\n?|\n/g, LINE_BREAK).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
