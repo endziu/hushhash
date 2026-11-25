@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ChatClient } from './client'
 import { createIdentity, parsePrivateKey } from './identity'
-import { initDb, getDb } from '../server/db'
+import { initDb, getDb, savePushSubscription } from '../server/db'
+import { setPushSender } from '../server/push'
 import { createFetch } from '../server/router'
 import { clientUpdateRequired } from '../server/http'
 import * as limiters from '../server/rate-limiters'
@@ -23,6 +24,7 @@ let transform: (request: Request, response: Response) => Promise<Response>
 let disconnect: () => void
 let replay: () => void
 let processes: ReturnType<typeof Bun.spawn>[]
+let pushes: number
 const accepted = Date.now()
 
 beforeEach(async () => {
@@ -35,6 +37,8 @@ beforeEach(async () => {
   const identity = await createIdentity(identityPath)
   transform = async (_request, response) => response
   processes = []
+  pushes = 0
+  setPushSender(async () => { pushes++ })
   const handler = createFetch()
   server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(request, server) {
     const response = await handler(request, server)
@@ -72,6 +76,7 @@ afterEach(async () => {
   for (const proc of processes) { proc.kill(); await proc.exited; proc.terminal?.close() }
   await Promise.all([alice.close(), bob.close()])
   await server.stop(true)
+  setPushSender(undefined)
   clock.mockRestore()
   logging.mockRestore()
   getDb().close()
@@ -365,3 +370,84 @@ test('chat drops messages when the partner clears the conversation', async () =>
   await alice.send(bob.identity.address, 'sent after clearing', 300)
   await until(() => cli.screen().includes('sent after clearing'), 'later message')
 }, 10_000)
+
+function openedAt(id: string): number | null {
+  return (getDb().query('SELECT opened_at FROM messages WHERE id = ?').get(id) as { opened_at: number | null }).opened_at
+}
+
+function subscribeBob() {
+  savePushSubscription(bob.identity.address, { endpoint: 'https://push.invalid/cli', p256dh: 'x', auth: 'y' })
+}
+
+test('watch opens messages but never suppresses push', async () => {
+  const cli = start('watch')
+  await until(() => cli.diagnostics().includes('Connected'), 'watch connected')
+  subscribeBob()
+  const sent = await alice.send(bob.identity.address, 'watched in the background', 5)
+  await until(() => cli.output().includes('watched in the background'), 'watch output')
+  expect(openedAt(sent.id)).not.toBeNull()
+  await until(() => pushes === 1, 'push sent')
+})
+
+test('a focused chat suppresses push; an unfocused one leaves messages unopened until focus returns', async () => {
+  const cli = start('chat')
+  await until(() => cli.screen().includes('Connected'), 'chat connected')
+  subscribeBob()
+  await alice.send(bob.identity.address, 'while focused', 5)
+  await until(() => cli.screen().includes('while focused'), 'focused message')
+  await Bun.sleep(100)
+  expect(pushes).toBe(0)
+
+  cli.proc.terminal!.write('\x1b[O')
+  await until(() => cli.screen().includes('away: new messages stay unopened'), 'away indicator')
+  await Bun.sleep(500) // attention settles, then reaches the server
+  const away = await alice.send(bob.identity.address, 'while away', 5)
+  await until(() => pushes === 1, 'push through while away')
+  await Bun.sleep(100)
+  expect(openedAt(away.id)).toBeNull()
+  expect(cli.output()).not.toContain('while away')
+
+  cli.proc.terminal!.write('\x1b[I')
+  await until(() => cli.screen().includes('while away'), 'opened on focus')
+  expect(openedAt(away.id)).not.toBeNull()
+  expect(cli.screen()).not.toContain('away: new messages stay unopened')
+  // Focus reports never reach the prompt.
+  cli.proc.terminal!.write('typed after focus\r')
+  await until(() => cli.screen().includes('you: typed after focus'), 'sent text')
+}, 10_000)
+
+test('an unfocused chat keeps messages from history unopened across a reconnect', async () => {
+  const cli = start('chat')
+  await until(() => cli.screen().includes('Connected'), 'chat connected')
+  cli.proc.terminal!.write('\x1b[O')
+  await until(() => cli.screen().includes('away: new messages stay unopened'), 'away indicator')
+  disconnect()
+  await until(() => cli.screen().includes('reconnecting'), 'disconnect')
+  const away = await alice.send(bob.identity.address, 'sent during disconnect', 5)
+  const elsewhere = await alice.send(bob.identity.address, 'opened elsewhere', 5)
+  const page = await bob.read(alice.identity.address, undefined, { confirmAvailability: false })
+  await bob.open(alice.identity.address, page.messages.filter(message => message.id === elsewhere.id))
+  await until(() => cli.screen().includes('Connected'), 'chat reconnected')
+  // A message already opened on another device is shown; an unopened one waits.
+  await until(() => cli.screen().includes('opened elsewhere'), 'opened message shown')
+  expect(openedAt(away.id)).toBeNull()
+  expect(cli.output()).not.toContain('sent during disconnect')
+
+  cli.proc.terminal!.write('\x1b[I')
+  await until(() => cli.screen().includes('sent during disconnect'), 'opened on focus')
+  expect(openedAt(away.id)).not.toBeNull()
+}, 10_000)
+
+test('chat keeps a multi-line paste in the prompt and sends it as one message on Enter', async () => {
+  const cli = start('chat')
+  await until(() => cli.screen().includes('Connected'), 'chat connected')
+  const sent = async () => (await alice.read(bob.identity.address)).messages.filter(message => message.sender === bob.identity.address)
+  cli.proc.terminal!.write('\x1b[200~/quit\nline1\r\nline2\x1b[201~')
+  await until(() => cli.output().includes('/quit↵line1↵line2'), 'paste shown in the prompt')
+  await Bun.sleep(200)
+  expect(await sent()).toHaveLength(0)
+  cli.proc.terminal!.write('\x1b\rline3\r')
+  await until(() => cli.screen().includes('Sent'), 'sent')
+  expect((await sent()).map(message => message.plaintext)).toEqual(['/quit\nline1\nline2\nline3'])
+  expect(cli.proc.exitCode).toBeNull()
+})

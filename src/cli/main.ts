@@ -5,9 +5,12 @@ import { parseArgs } from 'node:util'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { PassThrough } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import { ChatClient, ClientUpdateRequiredError, applyExpiryUpdate, isMessageAvailable, shouldRetainMessage, serverOrigin, type PlainMessage, type MessagePage } from './client'
 import { createIdentity, loadIdentity } from './identity'
+import { FOCUS_REPORTING_OFF, FOCUS_REPORTING_ON, TerminalAttention } from './attention'
+import { BRACKETED_PASTE_OFF, BRACKETED_PASTE_ON, LINE_BREAK, PasteFilter } from './paste'
 import { parseLiveEvent } from '../shared/live-events'
 import { isEnvelopeParticipant } from '../shared/message-envelope'
 
@@ -76,6 +79,13 @@ function positiveInteger(value: string | undefined, name: string): number | unde
   return number
 }
 
+/** Whether someone is looking at the conversation; without it, every incoming message is opened. */
+interface FollowAttention {
+  attentive(): boolean
+  /** Registers what to do when attention returns. */
+  onReturn(listener: () => void): void
+}
+
 async function follow(
   client: ChatClient,
   partner: Address,
@@ -83,6 +93,7 @@ async function follow(
   lifecycle: (message: PlainMessage) => void,
   status: (text: string) => void,
   unavailable: (id: string) => void = () => {},
+  attention?: FollowAttention,
 ): Promise<void> {
   const { signal } = client
   const seen = new Map<string, PlainMessage>()
@@ -99,6 +110,24 @@ async function follow(
       receive(message)
     }
   }
+  // Incoming messages that arrived while nobody was looking: verified, but unopened and not shown.
+  const held = new Map<string, PlainMessage>()
+  const hold = (message: PlainMessage) => { if (!seen.has(message.id)) held.set(message.id, message) }
+  const holding = () => attention !== undefined && !attention.attentive()
+  const release = async () => {
+    if (signal.aborted || holding() || !held.size) return
+    const messages = [...held.values()].filter(isMessageAvailable)
+    held.clear()
+    try {
+      for (const message of await client.open(partner, messages)) deliver(message)
+    } catch {
+      if (signal.aborted) return
+      // Kept for the next return of attention, or the next reconnect's history.
+      for (const message of messages) hold(message)
+      status('Could not open new messages')
+    }
+  }
+  attention?.onReturn(() => void release())
   let backoff = 1000
   while (!signal.aborted) {
     try {
@@ -108,10 +137,15 @@ async function follow(
         for (const [id, message] of seen) {
           if (!shouldRetainMessage(message)) seen.delete(id)
         }
+        for (const [id, message] of held) {
+          if (!isMessageAvailable(message)) held.delete(id)
+        }
         if (!synced) {
           // Subscribe first; messages arriving during history fetch remain buffered.
           const history: PlainMessage[] = []
-          for await (const page of client.history(partner)) history.unshift(...page)
+          // History finds every message still unopened; it replaces what was held.
+          held.clear()
+          for await (const page of client.history(partner, holding() ? { hold } : {})) history.unshift(...page)
           if (signal.aborted) return
           const availableIds = new Set(history.filter(isMessageAvailable).map(message => message.id))
           for (const id of seen.keys()) {
@@ -121,6 +155,8 @@ async function follow(
           synced = true
           backoff = 1000
           status('Connected')
+          // Attention may have returned while history was loading.
+          void release()
         }
         const event = parseLiveEvent(frame.event, frame.data)
         // Pings, unknown and malformed events never alter displayed messages.
@@ -130,8 +166,10 @@ async function follow(
             // Other conversations share this stream; only open the selected one.
             if (!isEnvelopeParticipant(event.data, client.identity.address, partner)) break
             try {
-              const message = await client.confirmLiveMessage(partner, event.data)
+              const message = await client.confirmLiveMessage(partner, event.data, holding() ? hold : undefined)
               if (message) deliver(message)
+              // Attention may have returned while the message was decrypted.
+              else void release()
             } catch {
               if (signal.aborted) return
               status('Rejected an invalid message')
@@ -144,6 +182,9 @@ async function follow(
           }
           case 'conversation-cleared':
             if (event.data.address !== partner) break
+            for (const [id, message] of held) {
+              if (message.created_at <= event.data.cleared_at) held.delete(id)
+            }
             for (const [id, message] of seen) {
               if (message.created_at <= event.data.cleared_at) { seen.delete(id); unavailable(id) }
             }
@@ -168,11 +209,33 @@ async function follow(
 
 async function chat(client: ChatClient, partner: Address, ttl: number): Promise<void> {
   const messages = new Map<string, PlainMessage>()
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true, historySize: 0 })
+  // readline reads the terminal through PasteFilter, so a paste's line breaks edit the prompt instead of sending it.
+  const input = new PassThrough({ encoding: 'utf8' })
+  const paste = new PasteFilter()
+  const decoder = new TextDecoder()
+  let flushTimer: ReturnType<typeof setTimeout> | undefined
+  const forward = (text: string) => { if (text) input.write(text) }
+  const onData = (chunk: Buffer) => {
+    clearTimeout(flushTimer)
+    forward(paste.write(decoder.decode(chunk, { stream: true })))
+    // A lone Escape, or a marker whose rest never comes, is released shortly.
+    if (paste.pending) flushTimer = setTimeout(() => forward(paste.flush()), 50)
+  }
+  process.stdin.setRawMode(true)
+  process.stdin.on('data', onData)
+  const rl = createInterface({ input, output: process.stdout, terminal: true, historySize: 0 })
   let status = 'Connecting…'
   let sending = false
   let visible = new Set<PlainMessage>()
-  process.stdout.write('\x1b[?1049h')
+  let attentionReturned = () => {}
+  // Like a browser window's focus: only an attentive terminal opens messages and suppresses push.
+  const attention = new TerminalAttention(attentive => {
+    client.setAttention(attentive)
+    if (attentive) attentionReturned()
+    render()
+  })
+  client.setAttention(attention.attentive)
+  process.stdout.write('\x1b[?1049h' + FOCUS_REPORTING_ON + BRACKETED_PASTE_ON)
   const render = () => {
     for (const [id, message] of messages) {
       if (!shouldRetainMessage(message)) messages.delete(id)
@@ -184,7 +247,9 @@ async function chat(client: ChatClient, partner: Address, ttl: number): Promise<
       .slice(-rows).flatMap(message => Bun.wrapAnsi(displayMessage(message, client.identity.address), width, { hard: true }).split('\n'))
       .slice(-rows)
     process.stdout.write('\x1b[2J\x1b[H' + [
-      `hushhash · ${checksumAddress(partner)}`, `Lifetime: ${ttl}s · /quit /ttl /help`, terminalText(status), '', ...lines, '',
+      `hushhash · ${checksumAddress(partner)}`,
+      `Lifetime: ${ttl}s · /quit /ttl /help${attention.attentive ? '' : ' · away: new messages stay unopened'}`,
+      terminalText(status), '', ...lines, '',
     ].map(line => clipLine(line, width)).join('\n') + '\n')
     rl.setPrompt('> ')
     rl.prompt(true)
@@ -194,20 +259,29 @@ async function chat(client: ChatClient, partner: Address, ttl: number): Promise<
   }, 250)
   const onResize = () => render()
   process.stdout.on('resize', onResize)
+  const onKeypress = (_text: string | undefined, key: { sequence?: string } | undefined) => {
+    if (key?.sequence === '\x1b[I') attention.focus()
+    else if (key?.sequence === '\x1b[O') attention.blur()
+    else attention.input()
+  }
+  input.on('keypress', onKeypress)
   rl.on('SIGINT', () => client.abort())
   rl.on('close', () => client.abort())
   let pendingSend = Promise.resolve()
-  rl.on('line', line => {
-    if (line === '/quit') { client.abort(); return }
-    if (line === '/help') { status = 'Enter sends text. /ttl SECONDS changes lifetime. /quit exits.'; render(); return }
-    if (line.startsWith('/ttl ')) {
+  rl.on('line', prompt => {
+    const line = prompt.replaceAll(LINE_BREAK, '\n')
+    // Commands are one line; a pasted text that starts with one is a message.
+    const command = !line.includes('\n')
+    if (command && line === '/quit') { client.abort(); return }
+    if (command && line === '/help') { status = `Enter sends text. A paste or Alt+Enter adds ${LINE_BREAK} for a line break. /ttl SECONDS changes lifetime. /quit exits.`; render(); return }
+    if (command && line.startsWith('/ttl ')) {
       const value = Number(line.slice(5))
       if (MESSAGE_TTLS.includes(value)) { ttl = value; status = 'Lifetime updated' }
       else status = `Choose: ${MESSAGE_TTLS.join(', ')}`
       render(); return
     }
     if (!line.trim()) { render(); return }
-    if (sending) { status = 'Still sending; your next line is kept in the prompt'; rl.write(line); render(); return }
+    if (sending) { status = 'Still sending; your next message is kept in the prompt'; rl.write(prompt); render(); return }
     sending = true
     status = 'Sending…'
     render()
@@ -225,12 +299,19 @@ async function chat(client: ChatClient, partner: Address, ttl: number): Promise<
       message => { messages.set(message.id, message); render() },
       message => { messages.set(message.id, message); render() },
       text => { status = text; render() },
-      id => { messages.delete(id); render() })
+      id => { messages.delete(id); render() },
+      { attentive: () => attention.attentive, onReturn: listener => { attentionReturned = listener } })
   } finally {
     clearInterval(timer)
+    attention.dispose()
     process.stdout.off('resize', onResize)
+    input.off('keypress', onKeypress)
     rl.close()
-    process.stdout.write('\x1b[?1049l')
+    clearTimeout(flushTimer)
+    process.stdin.off('data', onData)
+    process.stdin.setRawMode(false)
+    process.stdin.pause()
+    process.stdout.write(BRACKETED_PASTE_OFF + FOCUS_REPORTING_OFF + '\x1b[?1049l')
     await pendingSend
   }
 }

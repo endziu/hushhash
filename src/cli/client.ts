@@ -2,6 +2,7 @@ import type { Address } from '../shared/address'
 import type { Keypair } from '../shared/keypair'
 import { CLIENT_UPDATE_REQUIRED_CODE } from '../shared/api-error'
 import { parseDeliveryLifecycle, type ConfirmationKind, type ExpiryUpdate, type MessageLifecycle } from '../shared/message-envelope'
+import { AttentionReporter } from './attention'
 import { ApiError, confirmMessage, ProtocolClient, readApiError, sealMessage, unsealMessage, type ConfirmationResponse, type Conversation, type DecryptedMessage } from '../shared/protocol-client'
 
 interface Confirmation {
@@ -30,6 +31,8 @@ export interface MessagePage {
 }
 interface ReadOptions {
   confirmAvailability?: boolean
+  /** Receives each unopened incoming message instead of opening it; such messages are left out of the page. */
+  hold?: (message: PlainMessage) => void
 }
 
 export function isMessageAvailable(message: PlainMessage): boolean {
@@ -92,6 +95,8 @@ export class ChatClient {
   readonly signal = this.controller.signal
   /** Cancels requests along with `signal` until close() detaches it to send its logout. */
   private requestSignal: AbortSignal | undefined = this.signal
+  /** Set once this client reports attention; until then its live streams never suppress push. */
+  private attention: AttentionReporter | null = null
 
   constructor(origin: string, readonly identity: Keypair) {
     this.origin = serverOrigin(origin)
@@ -105,6 +110,20 @@ export class ChatClient {
         signal: AbortSignal.any([AbortSignal.timeout(15_000), ...(this.requestSignal ? [this.requestSignal] : [])]),
       })
     }, error => this.stopIfOutdated(error))
+  }
+
+  /**
+   * Reports whether someone is looking at this terminal, so that its live
+   * streams suppress push only while attentive, as a focused browser does.
+   * Without it (watch, scripts), live streams never suppress push.
+   */
+  setAttention(attentive: boolean): void {
+    if (this.attention) { this.attention.set(attentive); return }
+    this.attention = new AttentionReporter((stream, attentive, sequence) => this.authenticated(token => this.api.request('/api/events/attention', {
+      method: 'POST', body: { stream, attentive, sequence }, token,
+    })), attentive)
+    const attention = this.attention
+    this.signal.addEventListener('abort', () => attention.dispose(), { once: true })
   }
 
   /** Cancels pending and later requests; close() still sends its logout. */
@@ -224,14 +243,18 @@ export class ChatClient {
     const messages = decoded.filter(message => message !== null)
     const identity = this.identity.address
     const isIncoming = (message: PlainMessage) => message.recipient === identity
-    const incoming = messages.filter(isIncoming)
+    const { hold } = options
+    // Held messages are only checked, never opened, so they stay unopened.
+    const held = hold ? messages.filter(message => isIncoming(message) && message.opened_at === null) : []
+    const incoming = hold ? [] : messages.filter(isIncoming)
     const confirmAvailability = options.confirmAvailability ?? true
     const confirmed = new Map<string, MessageLifecycle>()
     if (confirmAvailability) {
-      const senderCopies = messages.filter(message => !isIncoming(message))
-      for (const [id, lifecycle] of await this.confirmMessages(partner, senderCopies, 'state')) confirmed.set(id, lifecycle)
+      const checked = messages.filter(message => !incoming.includes(message) && !held.includes(message))
+      for (const [id, lifecycle] of await this.confirmMessages(partner, checked, 'state')) confirmed.set(id, lifecycle)
       for (const [id, lifecycle] of await this.confirmMessages(partner, incoming, 'open')) confirmed.set(id, lifecycle)
     }
+    held.forEach(message => hold!(message))
     return { next_before_seq: page.next_before_seq, messages: messages.flatMap(msg => {
       if (confirmAvailability) {
         const lifecycle = confirmed.get(msg.id)
@@ -242,12 +265,31 @@ export class ChatClient {
     }).reverse() }
   }
 
-  /** Decrypts a live delivery, then confirms its current availability before exposing it. */
-  async confirmLiveMessage(partner: Address, raw: unknown): Promise<PlainMessage | null> {
+  /**
+   * Decrypts a live delivery, then confirms its current availability before exposing it.
+   * With `hold`, an incoming message is decrypted but left unopened and unconfirmed: it goes to `hold`, and null is returned.
+   */
+  async confirmLiveMessage(partner: Address, raw: unknown, hold?: (message: PlainMessage) => void): Promise<PlainMessage | null> {
     const message = await this.decode(raw, partner)
     const incoming = message.recipient === this.identity.address
+    if (incoming && hold) { hold(message); return null }
     const lifecycle = (await this.confirmMessages(partner, [message], incoming ? 'open' : 'state')).get(message.id)
     return lifecycle ? { ...message, ...lifecycle } : null
+  }
+
+  /** Opens held incoming messages; returns those still available, with their opening lifecycle. */
+  async open(partner: Address, messages: PlainMessage[]): Promise<PlainMessage[]> {
+    const opened: PlainMessage[] = []
+    // The server opens at most 100 messages per request.
+    for (let start = 0; start < messages.length; start += 100) {
+      const batch = messages.slice(start, start + 100)
+      const confirmed = await this.confirmMessages(partner, batch, 'open')
+      for (const message of batch) {
+        const lifecycle = confirmed.get(message.id)
+        if (lifecycle) opened.push({ ...message, ...lifecycle })
+      }
+    }
+    return opened
   }
 
   async *history(partner: Address, options: ReadOptions = {}): AsyncGenerator<PlainMessage[]> {
@@ -266,10 +308,11 @@ export class ChatClient {
   async *events(signal: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
     const sseToken = await this.authenticated(token => this.api.sseToken(token))
     const controller = new AbortController()
+    const dialed = this.attention?.attentive ?? false
     const connectTimer = setTimeout(() => controller.abort(), 15_000)
     let response: Response
     try {
-      response = await this.fetch(`/api/events?token=${encodeURIComponent(sseToken)}`, {
+      response = await this.fetch(`/api/events?token=${encodeURIComponent(sseToken)}&attentive=${dialed}`, {
         redirect: 'error',
         signal: AbortSignal.any([signal, controller.signal]),
       })
@@ -280,6 +323,7 @@ export class ChatClient {
       controller.abort()
       throw new Error(`Live connection failed: HTTP ${response.status}`)
     }
+    this.attention?.opened(sseToken, dialed)
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
@@ -304,6 +348,7 @@ export class ChatClient {
         if (buffer.length > 4_100_000) throw new Error('Live event exceeds message size limit')
       }
     } finally {
+      this.attention?.closed()
       controller.abort()
       await reader.cancel().catch(() => {})
       reader.releaseLock()

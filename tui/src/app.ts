@@ -9,7 +9,7 @@ import { MESSAGE_TTLS } from '../../src/shared/message-ttl'
 import { ConversationSession } from '../../src/client/lib/conversation-session'
 import { fmtDay, fmtRemaining, fmtTime } from '../../src/client/lib/display'
 import { errorMessage } from '../../src/client/lib/errors'
-import { IDLE_MS, TerminalAttention } from './attention'
+import { IDLE_MS, TerminalAttention } from '../../src/cli/attention'
 import type { ConnectionEpoch, IdentitySession } from './identity-session'
 import { safeText } from './text'
 
