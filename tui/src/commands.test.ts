@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test'
 import { generateKeypair } from '../../src/shared/keypair'
 import { Commands, classifyInput, type CommandHost, type CommandSession } from './commands'
-import { HELP } from './help'
+import { HELP_MODAL } from './help'
+import type { ModalOptions } from './modals'
+import type { ToastKind } from './toasts'
 
 function fakeSession(): CommandSession & { cleared: number; retried: string[] } {
   return {
@@ -16,16 +18,24 @@ function fakeSession(): CommandSession & { cleared: number; retried: string[] } 
 }
 
 function fakeHost(session: CommandSession | null = fakeSession()) {
-  const state = { ttl: 1800, shown: null as { text: string; error: boolean } | null, opened: [] as string[], quit: false }
+  const state = {
+    ttl: 1800,
+    toasts: [] as { text: string; kind: ToastKind }[],
+    modals: [] as ModalOptions[],
+    confirmAnswer: true,
+    confirms: 0,
+    opened: [] as string[],
+    quit: false,
+  }
   const host: CommandHost = {
     address: generateKeypair().address,
     session: () => session,
     ttl: () => state.ttl,
     setTtl: seconds => { state.ttl = seconds },
     open: address => { state.opened.push(address) },
-    shown: () => state.shown?.text ?? null,
-    show: (text, error = false) => { state.shown = { text, error } },
-    dismiss: () => { state.shown = null },
+    toast: (text, kind = 'info') => { state.toasts.push({ text, kind }) },
+    modal: async options => { state.modals.push(options) },
+    confirm: async () => { state.confirms++; return state.confirmAnswer },
     toggleLog: () => {},
     quit: () => { state.quit = true },
   }
@@ -46,69 +56,89 @@ test('/ttl shows, validates and sets the lifetime', () => {
   const { host, state } = fakeHost()
   const commands = new Commands(host)
   expect(commands.run('/ttl')).toBe(true)
-  expect(state.shown?.text).toStartWith('Lifetime 30m.')
+  expect(state.toasts.at(-1)).toEqual({ text: expect.stringMatching(/^Lifetime 30m\./), kind: 'info' })
   commands.run('/ttl forever')
-  expect(state.shown?.error).toBe(true)
+  expect(state.toasts.at(-1)?.kind).toBe('error')
   expect(state.ttl).toBe(1800)
   commands.run('/ttl 5m')
   expect(state.ttl).toBe(300)
+  expect(state.toasts.at(-1)?.kind).toBe('success')
 })
 
 test('an unknown command reports false so its text can be kept', () => {
   const { host, state } = fakeHost()
   expect(new Commands(host).run('/tll 5m')).toBe(false)
-  expect(state.shown).toEqual({ text: expect.stringContaining('Unknown command /tll'), error: true })
+  expect(state.toasts).toEqual([{ text: expect.stringContaining('Unknown command /tll'), kind: 'error' }])
 })
 
 test('/open needs a valid address', () => {
   const { host, state } = fakeHost()
   const commands = new Commands(host)
   commands.run('/open nope')
-  expect(state.shown?.text).toBe('Usage: /open 0xADDRESS')
+  expect(state.toasts.at(-1)).toEqual({ text: 'Usage: /open 0xADDRESS', kind: 'error' })
   const address = generateKeypair().address
   commands.run(`/new ${address}`)
   expect(state.opened).toEqual([address])
 })
 
-test('/clear deletes only when typed again within 10 seconds for the same conversation', async () => {
-  let now = 0
+test('/clear deletes only once confirmed', async () => {
+  const session = fakeSession()
+  const { host, state } = fakeHost(session)
+  const commands = new Commands(host)
+  state.confirmAnswer = false
+  commands.run('/clear')
+  await Bun.sleep(0)
+  expect(state.confirms).toBe(1)
+  expect(session.cleared).toBe(0)
+
+  state.confirmAnswer = true
+  commands.run('/clear')
+  await Bun.sleep(0)
+  expect(session.cleared).toBe(1)
+  expect(state.toasts.at(-1)).toEqual({ text: 'Conversation cleared for both of you', kind: 'success' })
+})
+
+test('/clear does nothing if another conversation opened while it asked', async () => {
   const first = fakeSession()
   let session: CommandSession = first
+  let answer!: (yes: boolean) => void
   const { host } = fakeHost()
-  const commands = new Commands({ ...host, session: () => session }, () => now)
+  const commands = new Commands({
+    ...host,
+    session: () => session,
+    confirm: () => new Promise(resolve => { answer = resolve }),
+  })
   commands.run('/clear')
-  now = 10_001
-  commands.run('/clear')
+  session = fakeSession()
+  answer(true)
+  await Bun.sleep(0)
   expect(first.cleared).toBe(0)
-  now += 10_000
-  commands.run('/clear')
-  expect(first.cleared).toBe(1)
+})
 
-  // Opening a conversation makes a new session, which starts over.
-  commands.run('/clear')
-  const second = fakeSession()
-  session = second
-  commands.run('/clear')
-  expect(first.cleared).toBe(1)
-  expect(second.cleared).toBe(0)
-  commands.run('/clear')
-  expect(second.cleared).toBe(1)
+test('/clear reports a failure', async () => {
+  const session = fakeSession()
+  session.clear = async () => { throw new Error('offline') }
+  const { host, state } = fakeHost(session)
+  new Commands(host).run('/clear')
+  await Bun.sleep(0)
+  expect(state.toasts.at(-1)).toEqual({ text: 'Clear failed: offline', kind: 'error' })
 })
 
 test('/clear without a conversation asks to open one', () => {
   const { host, state } = fakeHost(null)
   new Commands(host).run('/clear')
-  expect(state.shown).toEqual({ text: 'Open a conversation first', error: true })
+  expect(state.confirms).toBe(0)
+  expect(state.toasts).toEqual([{ text: 'Open a conversation first', kind: 'error' }])
 })
 
-test('/help toggles and /retry retries what failed', () => {
+test('/help and /address open modals; /retry retries what failed', () => {
   const session = fakeSession()
   const { host, state } = fakeHost(session)
   const commands = new Commands(host)
   commands.run('/help')
-  expect(state.shown?.text).toBe(HELP)
-  commands.run('/help')
-  expect(state.shown).toBeNull()
+  commands.run('/address')
+  expect(state.modals[0]).toBe(HELP_MODAL)
+  expect(state.modals[1]?.title).toBe('Your address')
 
   commands.run('/retry')
   session.snapshot = () => ({ openingFailed: true })

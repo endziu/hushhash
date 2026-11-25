@@ -6,12 +6,15 @@ import { errorMessage } from '../../src/client/lib/errors'
 import { IDLE_MS, TerminalAttention } from '../../src/cli/attention'
 import type { ConnectionEpoch, IdentitySession } from './identity-session'
 import { Commands, classifyInput } from './commands'
+import { HELP_MODAL } from './help'
 import { Composer } from './composer'
 import { mountLayout } from './layout'
 import { Sidebar, type ConversationEntry } from './sidebar'
 import { Footer } from './footer'
 import { createHeader } from './header'
-import { Transcript, type Feedback } from './transcript'
+import { Modals } from './modals'
+import { Toasts, type ToastKind } from './toasts'
+import { Transcript } from './transcript'
 
 export interface AppOptions {
   server: string
@@ -34,6 +37,8 @@ export class App {
   private readonly transcript: Transcript
   private readonly composer: Composer
   private readonly commands: Commands
+  private readonly modals: Modals
+  private readonly toasts: Toasts
 
   private conversations: ConversationEntry[] = []
   private readonly unread = new Set<Address>()
@@ -43,7 +48,6 @@ export class App {
   private readonly attention: TerminalAttention
   private connected = false
   private status = 'Connecting…'
-  private feedback: Feedback | null = null
   private ttl: number
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private readonly tick: ReturnType<typeof setInterval>
@@ -62,19 +66,21 @@ export class App {
     this.transcript = new Transcript(renderer, identity.address)
     this.composer = new Composer(renderer, () => this.submit())
     this.footer = new Footer(renderer)
-    mountLayout(renderer, {
+    const root = mountLayout(renderer, {
       header: createHeader(renderer, identity.address, options.server), sidebar: this.sidebar.view, pane: this.transcript.view,
       composer: this.composer.view, footer: this.footer.view,
     }, () => this.attention.input())
+    this.modals = new Modals(renderer, root)
+    this.toasts = new Toasts(renderer, root)
     this.commands = new Commands({
       address: identity.address,
       session: () => this.session,
       ttl: () => this.ttl,
-      setTtl: seconds => { this.ttl = seconds },
+      setTtl: seconds => { this.ttl = seconds; this.render() },
       open: address => this.open(address),
-      shown: () => this.feedback?.text ?? null,
-      show: (text, error) => this.show(text, error),
-      dismiss: () => { this.feedback = null; this.render() },
+      toast: (text, kind) => this.toast(text, kind),
+      modal: options => this.modals.show(options),
+      confirm: options => this.modals.confirm(options),
       toggleLog: () => this.renderer.console.toggle(),
       quit: () => this.stop(),
     })
@@ -106,7 +112,7 @@ export class App {
       },
       status: text => { this.status = text; this.render() },
     }).catch(error => {
-      if (!this.identity.signal.aborted) this.show(errorMessage(error, 'Live connection failed'), true)
+      if (!this.identity.signal.aborted) this.toast(errorMessage(error, 'Live connection failed'), 'error')
     })
     // An outdated client stops itself; the app follows so main can explain.
     this.identity.signal.addEventListener('abort', () => this.stop(), { once: true })
@@ -119,6 +125,9 @@ export class App {
     clearInterval(this.tick)
     clearTimeout(this.refreshTimer)
     this.attention.dispose()
+    // Settles a pending /clear confirmation as cancelled.
+    this.modals.close()
+    this.toasts.dispose()
     this.session?.dispose()
     this.session = null
     this.identity.abort()
@@ -145,6 +154,11 @@ export class App {
     if (key.ctrl && key.name === 'c') {
       key.preventDefault()
       this.stop()
+    } else if (this.modals.handleKey(key)) {
+      // An open modal takes every other key.
+    } else if (key.name === 'f1' || (key.name === '?' && this.sidebar.focused)) {
+      key.preventDefault()
+      void this.modals.show(HELP_MODAL)
     } else if (key.name === 'tab' && !key.ctrl && !key.meta) {
       key.preventDefault()
       if (this.composer.focused) this.sidebar.focus()
@@ -162,9 +176,8 @@ export class App {
     }
   }
 
-  private show(text: string, error = false): void {
-    this.feedback = { text, error }
-    this.render()
+  private toast(text: string, kind: ToastKind = 'info'): void {
+    if (!this.stopped) this.toasts.show(text, kind)
   }
 
   private liveEvent(event: LiveEvent): void {
@@ -193,13 +206,13 @@ export class App {
       this.renderList()
       return true
     } catch (error) {
-      if (!this.identity.signal.aborted) this.show(`Could not load conversations: ${errorMessage(error, 'unknown error')}`, true)
+      if (!this.identity.signal.aborted) this.toast(`Could not load conversations: ${errorMessage(error, 'unknown error')}`, 'error')
       return false
     }
   }
 
   open(partner: Address): void {
-    if (partner === this.identity.address) { this.show('That is your own address', true); return }
+    if (partner === this.identity.address) { this.toast('That is your own address', 'error'); return }
     if (partner !== this.partner) {
       this.session?.dispose()
       this.transcript.reset()
@@ -218,8 +231,8 @@ export class App {
     if (!this.conversations.some(conversation => conversation.address === partner)) {
       this.conversations.unshift({ address: partner, last_message_at: null })
     }
-    this.feedback = null
-    this.composer.focus()
+    // A modal keeps focus; closing it gives focus back.
+    if (!this.modals.isOpen) this.composer.focus()
     this.render()
   }
 
@@ -234,14 +247,12 @@ export class App {
       return
     }
     const session = this.session
-    if (!session) { this.show('Open a conversation first: /open ADDRESS', true); return }
+    if (!session) { this.toast('Open a conversation first: /open ADDRESS', 'error'); return }
     this.composer.clear()
-    this.feedback = null
-    this.render()
     session.send(input.text, this.ttl).catch(error => {
       // Nothing typed is lost: a failed message goes back to an empty composer.
       if (!this.composer.text) this.composer.setText(text)
-      this.show(`Send failed: ${errorMessage(error, 'unknown error')}. It may still have arrived; check before resending.`, true)
+      this.toast(`Send failed: ${errorMessage(error, 'unknown error')}. It may still have arrived; check before resending.`, 'error')
     })
   }
 
@@ -250,7 +261,7 @@ export class App {
     this.footer.render({ connected: this.connected, status: this.status, ttl: this.ttl, attentive: this.attention.attentive })
     this.renderList()
     this.transcript.renderPane({
-      partner: this.partner, snapshot: this.session?.snapshot() ?? null, feedback: this.feedback, attentive: this.attention.attentive,
+      partner: this.partner, snapshot: this.session?.snapshot() ?? null, attentive: this.attention.attentive,
     })
     this.renderMessages()
   }

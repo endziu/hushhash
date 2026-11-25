@@ -68,6 +68,10 @@ export class Sidebar {
     this.list.focus()
   }
 
+  get focused(): boolean {
+    return this.list.focused
+  }
+
   /**
    * Shows `conversations`, keeping the highlighted one highlighted, or else
    * highlighting `current`.

@@ -10,6 +10,12 @@ export const COLORS = {
   them: '#e0af68',
   error: '#f7768e',
   border: '#3b4261',
+  /** Behind dialogs and toasts, so they cover what is under them. */
+  surface: '#1f2335',
+  /** Dims the screen behind an open dialog. */
+  backdrop: '#00000080',
+  /** Text on an accent or error background. */
+  onAccent: '#1a1b26',
 }
 
 /** Lights `frame`'s border while `inner` has focus. */
