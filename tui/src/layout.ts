@@ -11,9 +11,10 @@ export interface LayoutParts {
 /**
  * Arranges the parts on screen: the header on top, the sidebar beside the
  * pane and composer, and the footer at the bottom. `onMouse` hears every
- * click and scroll, since mouse events bubble to the root.
+ * click and scroll, since mouse events bubble to the root. Returns the root,
+ * where overlays go so their mouse events bubble there too.
  */
-export function mountLayout(renderer: CliRenderer, parts: LayoutParts, onMouse: () => void): void {
+export function mountLayout(renderer: CliRenderer, parts: LayoutParts, onMouse: () => void): BoxRenderable {
   const root = new BoxRenderable(renderer, {
     width: '100%', height: '100%', flexDirection: 'column',
     onMouseDown: onMouse,
@@ -29,4 +30,5 @@ export function mountLayout(renderer: CliRenderer, parts: LayoutParts, onMouse: 
   root.add(body)
   root.add(parts.footer)
   renderer.root.add(root)
+  return root
 }

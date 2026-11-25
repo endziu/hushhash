@@ -3,8 +3,8 @@ import { errorMessage } from '../../src/client/lib/errors'
 import { terminalText } from '../../src/cli/terminal-text'
 import { HELP } from './help'
 import { LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './lifetime'
-
-const CLEAR_CONFIRM_MS = 10_000
+import type { ConfirmOptions, ModalOptions } from './modals'
+import type { ToastKind } from './toasts'
 
 export type ComposerInput =
   | { type: 'empty' }
@@ -39,21 +39,19 @@ export interface CommandHost {
   ttl(): number
   setTtl(seconds: number): void
   open(address: Address): void
-  /** The text of the feedback on screen, if any. */
-  shown(): string | null
-  /** Shows a command result, or an error, above the messages. */
-  show(text: string, error?: boolean): void
-  dismiss(): void
+  toast(text: string, kind?: ToastKind): void
+  modal(options: ModalOptions): void
+  confirm(options: ConfirmOptions): Promise<boolean>
   toggleLog(): void
   quit(): void
 }
 
+/** The Help modal, for /help, F1 and ? in the list. */
+export const HELP_MODAL: ModalOptions = { title: 'Help', body: HELP, width: 84 }
+
 /** Runs slash commands against the app. */
 export class Commands {
-  // /clear asks to be typed again for the same conversation before it deletes anything.
-  private clearPending: { session: CommandSession; until: number } | null = null
-
-  constructor(private readonly host: CommandHost, private readonly now: () => number = Date.now) {}
+  constructor(private readonly host: CommandHost) {}
 
   /** Runs a command line; false if there is no such command. */
   run(line: string): boolean {
@@ -64,64 +62,65 @@ export class Commands {
       case '/open':
       case '/new': {
         const address = parseAddress(arg)
-        if (!address) host.show('Usage: /open 0xADDRESS', true)
+        if (!address) host.toast('Usage: /open 0xADDRESS', 'error')
         else host.open(address)
         return true
       }
       case '/ttl': {
-        if (!arg) { host.show(`Lifetime ${lifetimeLabel(host.ttl())}. Choose: ${LIFETIME_CHOICES_TEXT}`); return true }
+        if (!arg) { host.toast(`Lifetime ${lifetimeLabel(host.ttl())}. Choose: ${LIFETIME_CHOICES_TEXT}`); return true }
         const seconds = parseLifetime(arg)
-        if (seconds === null) { host.show(`Choose a lifetime: ${LIFETIME_CHOICES_TEXT}`, true); return true }
+        if (seconds === null) { host.toast(`Choose a lifetime: ${LIFETIME_CHOICES_TEXT}`, 'error'); return true }
         host.setTtl(seconds)
-        host.show(`New messages disappear ${lifetimeLabel(seconds)} after they are opened`)
+        host.toast(`New messages disappear ${lifetimeLabel(seconds)} after they are opened`, 'success')
         return true
       }
       case '/clear':
-        this.clear()
+        void this.clear()
         return true
       case '/retry': {
         const session = host.session()
         if (session?.snapshot().openingFailed) session.retryOpening()
         else session?.retry()
-        host.dismiss()
         return true
       }
       case '/older':
         void host.session()?.fetchOlder()
         return true
       case '/address':
-        host.show(`Your address: ${checksumAddress(host.address)}`)
+        host.modal({ title: 'Your address', body: `${checksumAddress(host.address)}\n\nShare it so people can message you.` })
         return true
       case '/log':
         host.toggleLog()
         return true
       case '/help':
-        if (host.shown() === HELP) host.dismiss()
-        else host.show(HELP)
+        host.modal(HELP_MODAL)
         return true
       case '/quit':
       case '/exit':
         host.quit()
         return true
       default:
-        host.show(`Unknown command ${terminalText(name ?? '')}. /help lists commands; //text sends text starting with /`, true)
+        host.toast(`Unknown command ${terminalText(name ?? '')}. /help lists commands; //text sends text starting with /`, 'error')
         return false
     }
   }
 
-  private clear(): void {
+  private async clear(): Promise<void> {
     const host = this.host
     const session = host.session()
-    if (!session) { host.show('Open a conversation first', true); return }
-    const now = this.now()
-    if (this.clearPending?.session !== session || now > this.clearPending.until) {
-      this.clearPending = { session, until: now + CLEAR_CONFIRM_MS }
-      host.show('Type /clear again within 10 seconds to delete every message in this conversation for both of you', true)
-      return
+    if (!session) { host.toast('Open a conversation first', 'error'); return }
+    const confirmed = await host.confirm({
+      title: 'Clear conversation',
+      body: 'Delete every message in this conversation, for both of you? This cannot be undone.',
+      action: 'Delete',
+    })
+    // Another conversation may have opened meanwhile.
+    if (!confirmed || host.session() !== session) return
+    try {
+      await session.clear()
+      host.toast('Conversation cleared for both of you', 'success')
+    } catch (error) {
+      host.toast(`Clear failed: ${errorMessage(error, 'unknown error')}`, 'error')
     }
-    this.clearPending = null
-    session.clear()
-      .then(() => host.show('Conversation cleared for both of you'))
-      .catch(error => host.show(`Clear failed: ${errorMessage(error, 'unknown error')}`, true))
   }
 }

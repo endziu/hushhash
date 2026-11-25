@@ -7,23 +7,16 @@ import { terminalText } from '../../src/cli/terminal-text'
 import { HELP } from './help'
 import { COLORS } from './theme'
 
-/** A command result or error, shown above the messages until replaced or dismissed. */
-export interface Feedback {
-  text: string
-  error: boolean
-}
-
 export interface PaneState {
   /** The open conversation, or null before one is opened. */
   partner: Address | null
   snapshot: SessionSnapshot | null
-  feedback: Feedback | null
   attentive: boolean
 }
 
 /**
- * The conversation pane: its title, a notice for status and problems, and
- * the scrolling messages.
+ * The conversation pane: its title, a notice for the conversation's state and
+ * problems, and the scrolling messages.
  */
 export class Transcript {
   readonly view: BoxRenderable
@@ -56,7 +49,7 @@ export class Transcript {
   }
 
   /** Draws the title and the notice. */
-  renderPane({ partner, snapshot, feedback, attentive }: PaneState): void {
+  renderPane({ partner, snapshot, attentive }: PaneState): void {
     if (!partner || !snapshot) {
       this.view.title = ' hushhash '
       this.notice.visible = true
@@ -64,7 +57,7 @@ export class Transcript {
       return
     }
     this.view.title = ` ${checksumAddress(partner)} `
-    const lines = noticeLines(snapshot, feedback, attentive)
+    const lines = noticeLines(snapshot, attentive)
     this.notice.visible = lines.length > 0
     this.notice.content = lines.length ? joinLines(lines) : ''
   }
@@ -99,10 +92,9 @@ export class Transcript {
   }
 }
 
-function noticeLines(snapshot: SessionSnapshot, feedback: Feedback | null, attentive: boolean): StyledText[] {
+function noticeLines(snapshot: SessionSnapshot, attentive: boolean): StyledText[] {
   const lines: StyledText[] = []
   const problem = (text: string) => lines.push(t`${fg(COLORS.error)(text)}`)
-  if (feedback) lines.push(feedback.error ? t`${fg(COLORS.error)(feedback.text)}` : t`${fg(COLORS.muted)(feedback.text)}`)
   if (snapshot.error) problem(`${terminalText(snapshot.error, { newlines: true })} · /retry`)
   if (snapshot.openingFailed) problem('Some new messages could not be opened · /retry')
   if (snapshot.olderError) problem(`${terminalText(snapshot.olderError, { newlines: true })} · PageUp to retry`)

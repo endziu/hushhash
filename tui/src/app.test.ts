@@ -220,19 +220,69 @@ test('marks other conversations unread and opens them from the list', async () =
   }
 })
 
-test('/clear asks for confirmation, then clears for both participants', async () => {
+test('/clear asks in a dialog: cancel keeps the messages, Delete clears for both', async () => {
   await start()
   await alice.send(identitySession.address, 'to be cleared')
   await until(() => frame().includes('to be cleared'), 'message rendered')
   await setup.mockInput.typeText('/clear')
   setup.mockInput.pressEnter()
-  await until(() => frame().includes('Type /clear again'), 'confirmation asked')
+  await until(() => frame().includes(' Clear conversation '), 'confirmation asked')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Clear conversation '), 'cancelled')
   expect(frame()).toContain('to be cleared')
+  expect((await alice.read(identitySession.address)).messages).toHaveLength(1)
+
   await setup.mockInput.typeText('/clear')
   setup.mockInput.pressEnter()
+  await until(() => frame().includes(' Clear conversation '), 'confirmation asked again')
+  setup.mockInput.pressArrow('right')
+  setup.mockInput.pressEnter()
   await until(() => !frame().includes('to be cleared'), 'conversation cleared')
+  await until(() => frame().includes('Conversation cleared for both of you'), 'success toast')
   expect((await alice.read(identitySession.address)).messages).toHaveLength(0)
 })
+
+test('/help, F1 and ? in the list open Help; Esc gives the keys back', async () => {
+  await start()
+  await setup.mockInput.typeText('/help')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes(' Help '), 'help from /help')
+  // Typing goes nowhere while Help is open.
+  await setup.mockInput.typeText('x')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Help '), 'help closed')
+  await setup.mockInput.typeText('hi')
+  await setup.renderOnce()
+  expect(frame()).toContain('hi')
+  expect(frame()).not.toContain('xhi')
+
+  setup.mockInput.pressKey('F1' as never)
+  await until(() => frame().includes(' Help '), 'help from F1')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Help '), 'help closed again')
+
+  setup.mockInput.pressTab()
+  await setup.mockInput.typeText('?')
+  await until(() => frame().includes(' Help '), 'help from ? in the list')
+})
+
+test('key presses in an open dialog still count as attention', async () => {
+  await start(undefined, 32, 1000)
+  setup.mockInput.pressKey('F1' as never)
+  await until(() => frame().includes(' Help '), 'help open')
+  await until(() => frame().includes('away: new messages stay unopened'), 'idle', 3000)
+  setup.mockInput.pressArrow('down')
+  await until(() => !frame().includes('away: new messages stay unopened'), 'a key in the dialog counts')
+  expect(frame()).toContain(' Help ')
+})
+
+test('command results and errors show as toasts that go away', async () => {
+  await start()
+  await setup.mockInput.typeText('/ttl 5m')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('New messages disappear 5m'), 'lifetime toast')
+  await until(() => !frame().includes('New messages disappear 5m'), 'toast expired', 6000)
+}, 10_000)
 
 test('an unregistered partner is reported and a failed send keeps its text', async () => {
   await start(generateKeypair().address)

@@ -26,17 +26,27 @@ messages (default 30m, as in the browser).
 | Enter | Send |
 | Shift+Enter, Alt+Enter, Ctrl+J | New line (Shift+Enter needs a terminal that reports it) |
 | Tab | Switch between the conversation list and the composer |
-| Esc | Go to the conversation list |
+| Esc | Go to the conversation list; in a dialog, close it |
+| F1, or ? in the list | Help |
 | Enter in the list | Open that conversation |
 | Click in the list | Open that conversation; the mouse wheel moves the highlight |
 | PageUp / PageDown | Scroll; PageUp at the top loads older messages |
 | Ctrl+C | Quit |
 
-Commands typed in the composer: `/open ADDRESS` (or `/new`), `/ttl [5m|300]`, `/clear` (asks
-again first), `/retry`, `/older`, `/address`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
+Commands typed in the composer: `/open ADDRESS` (or `/new`), `/ttl [5m|300]`, `/clear` (asks in a
+dialog first), `/retry`, `/older`, `/address`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
 single line; multi-line text that starts with `/` is sent as a message. Start a one-line message
 with `//` to send text that begins with `/`; multi-line text is sent as typed. A mistyped command
 stays in the composer.
+
+Help, `/address` and `/clear` open a dialog over the screen. While it is open it takes every key;
+Esc or a click outside closes it. `/clear` starts on Cancel, so Enter alone does not delete
+anything: choose Delete with →, or press y.
+
+Command results and errors appear in the top-right corner and disappear after a few seconds
+(errors after eight); click one to dismiss it. Problems with the open conversation, such as an
+address that is not registered or messages that could not be opened, stay at the top of the pane
+until they are fixed.
 
 A `●` in the list marks a conversation with messages that arrived while another was open. It is
 kept in memory only.
