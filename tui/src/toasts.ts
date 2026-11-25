@@ -1,5 +1,5 @@
 import { BoxRenderable, TextRenderable, fg, t, type CliRenderer, type Renderable } from '@opentui/core'
-import { COLORS } from './theme'
+import { COLORS, LAYERS } from './theme'
 
 export type ToastKind = 'info' | 'success' | 'error'
 
@@ -26,7 +26,7 @@ export class Toasts {
     private readonly duration: (kind: ToastKind) => number = kind => DURATION_MS[kind],
   ) {
     this.stack = new BoxRenderable(renderer, {
-      position: 'absolute', top: 2, right: 2, zIndex: 200, maxWidth: '60%',
+      position: 'absolute', top: 2, right: 2, zIndex: LAYERS.toasts, maxWidth: '60%',
       flexDirection: 'column', alignItems: 'flex-end',
     })
     parent.add(this.stack)

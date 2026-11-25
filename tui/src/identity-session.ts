@@ -10,11 +10,22 @@ const MAX_BACKOFF_MS = 30_000
 /** One open live stream; only equality has meaning. */
 export type ConnectionEpoch = NonNullable<SessionOptions['connection']>
 
+/** Where the live event stream is. */
+export type LiveStatus =
+  | { state: 'connecting' }
+  | { state: 'connected' }
+  /**
+   * The last attempt failed for `reason`; the next starts at `retryAt`
+   * (Date.now() time) and stays in this state until it opens or fails.
+   * `failures` counts the attempts that failed in a row.
+   */
+  | { state: 'retrying', reason: string, retryAt: number, failures: number }
+
 export interface LiveHandlers {
   event(event: LiveEvent): void
   /** A stream opened (a new epoch) or was lost (null). */
   connection(epoch: ConnectionEpoch | null): void
-  status(text: string): void
+  status(status: LiveStatus): void
 }
 
 /**
@@ -57,14 +68,18 @@ export class IdentitySession extends ChatClient {
   /** Keeps a live event stream open, reconnecting with backoff, until abort(). */
   async live(handlers: LiveHandlers): Promise<void> {
     let backoff = 1000
+    let failures = 0
     while (!this.signal.aborted) {
       let opened = false
+      // A retry stays `retrying`, so offline and its reason stay on screen.
+      if (failures === 0) handlers.status({ state: 'connecting' })
       try {
         for await (const frame of this.events(this.signal, () => {
           opened = true
           backoff = 1000
+          failures = 0
           handlers.connection(Symbol('live stream'))
-          handlers.status('Connected')
+          handlers.status({ state: 'connected' })
         })) {
           const event = parseLiveEvent(frame.event, frame.data)
           if (event) handlers.event(event)
@@ -73,7 +88,9 @@ export class IdentitySession extends ChatClient {
       } catch (error) {
         if (this.signal.aborted) return
         if (opened) handlers.connection(null)
-        handlers.status(`${error instanceof Error ? error.message : 'Connection failed'}; reconnecting in ${backoff / 1000}s`)
+        failures++
+        const reason = error instanceof Error ? error.message : 'Connection failed'
+        handlers.status({ state: 'retrying', reason, retryAt: Date.now() + backoff, failures })
         await delay(backoff, undefined, { signal: this.signal }).catch(() => {})
         backoff = Math.min(backoff * 2, MAX_BACKOFF_MS)
       }

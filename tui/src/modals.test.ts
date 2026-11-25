@@ -69,6 +69,32 @@ test('a long body scrolls inside a modal that fits the screen', async () => {
   expect(await frame()).toContain('row 59')
 })
 
+test('shrinking the screen keeps an open modal\'s body inside its frame', async () => {
+  setup.resize(110, 32)
+  void modals.show({ title: 'Long', width: 84, body: Array.from({ length: 24 }, (_, i) => `row ${i} ${'wraps '.repeat(11)}`).join('\n') })
+  await frame()
+  setup.resize(60, 20)
+  await frame()
+  const lines = (await frame()).split('\n')
+  const bottom = lines.findIndex(line => line.includes('╰'))
+  expect(lines[bottom]).toMatch(/^\s*╰─+╯\s*$/)
+  expect(lines.slice(bottom + 1).join('').trim()).toBe('')
+})
+
+test('the open modal\'s keys are there for the hint bar, and changes are reported', async () => {
+  let changes = 0
+  const root = new BoxRenderable(setup.renderer, { width: '100%', height: '100%' })
+  setup.renderer.root.add(root)
+  const watched = new Modals(setup.renderer, root, () => { changes++ })
+  expect(watched.hints).toBeNull()
+  void watched.confirm({ title: 'Clear', body: 'Sure?', action: 'Delete' })
+  expect(watched.hints?.map(hint => `${hint.keys} ${hint.action}`)).toContain('y delete')
+  expect(changes).toBe(1)
+  watched.close()
+  expect(watched.hints).toBeNull()
+  expect(changes).toBe(2)
+})
+
 test('confirm starts on Cancel, so Enter cancels', async () => {
   const answer = modals.confirm({ title: 'Clear conversation', body: 'Delete everything?', action: 'Delete' })
   expect(await frame()).toContain('[ Cancel ]')

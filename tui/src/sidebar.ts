@@ -1,7 +1,7 @@
 import { BoxRenderable, SelectRenderable, SelectRenderableEvents, type CliRenderer } from '@opentui/core'
 import { parseAddress, shortAddress, type Address } from '../../src/shared/address'
 import { fmtDay, fmtTime } from '../../src/client/lib/display'
-import { COLORS, highlightOnFocus } from './theme'
+import { COLORS, highlightOnFocus, onFocusChange } from './theme'
 
 export interface ConversationEntry {
   address: Address
@@ -66,6 +66,11 @@ export class Sidebar {
 
   focus(): void {
     this.list.focus()
+  }
+
+  /** Runs `listener` whenever this gains or loses focus. */
+  onFocusChange(listener: () => void): void {
+    onFocusChange(this.list, listener)
   }
 
   get focused(): boolean {
