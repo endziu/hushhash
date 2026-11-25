@@ -4,15 +4,20 @@ import type { DecryptedMessage } from '../../src/shared/protocol-client'
 import type { SessionSnapshot } from '../../src/client/lib/conversation-session'
 import { fmtRemaining, fmtTime } from '../../src/client/lib/display'
 import { terminalText } from '../../src/cli/terminal-text'
-import { HELP } from './commands'
+import { HELP } from './help'
 import { COLORS } from './theme'
+
+/** A command result or error, shown above the messages until replaced or dismissed. */
+export interface Feedback {
+  text: string
+  error: boolean
+}
 
 export interface PaneState {
   /** The open conversation, or null before one is opened. */
   partner: Address | null
   snapshot: SessionSnapshot | null
-  /** A command result or error shown above the messages. */
-  message: { text: string; error: boolean } | null
+  feedback: Feedback | null
   attentive: boolean
 }
 
@@ -51,7 +56,7 @@ export class Transcript {
   }
 
   /** Draws the title and the notice. */
-  renderPane({ partner, snapshot, message, attentive }: PaneState): void {
+  renderPane({ partner, snapshot, feedback, attentive }: PaneState): void {
     if (!partner || !snapshot) {
       this.view.title = ' hushhash '
       this.notice.visible = true
@@ -59,7 +64,7 @@ export class Transcript {
       return
     }
     this.view.title = ` ${checksumAddress(partner)} `
-    const lines = noticeLines(snapshot, message, attentive)
+    const lines = noticeLines(snapshot, feedback, attentive)
     this.notice.visible = lines.length > 0
     this.notice.content = lines.length ? joinLines(lines) : ''
   }
@@ -94,10 +99,10 @@ export class Transcript {
   }
 }
 
-function noticeLines(snapshot: SessionSnapshot, message: PaneState['message'], attentive: boolean): StyledText[] {
+function noticeLines(snapshot: SessionSnapshot, feedback: Feedback | null, attentive: boolean): StyledText[] {
   const lines: StyledText[] = []
   const problem = (text: string) => lines.push(t`${fg(COLORS.error)(text)}`)
-  if (message) lines.push(message.error ? t`${fg(COLORS.error)(message.text)}` : t`${fg(COLORS.muted)(message.text)}`)
+  if (feedback) lines.push(feedback.error ? t`${fg(COLORS.error)(feedback.text)}` : t`${fg(COLORS.muted)(feedback.text)}`)
   if (snapshot.error) problem(`${terminalText(snapshot.error, { newlines: true })} · /retry`)
   if (snapshot.openingFailed) problem('Some new messages could not be opened · /retry')
   if (snapshot.olderError) problem(`${terminalText(snapshot.olderError, { newlines: true })} · PageUp to retry`)

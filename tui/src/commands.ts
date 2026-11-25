@@ -1,29 +1,8 @@
 import { checksumAddress, parseAddress, type Address } from '../../src/shared/address'
 import { errorMessage } from '../../src/client/lib/errors'
 import { terminalText } from '../../src/cli/terminal-text'
+import { HELP } from './help'
 import { LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './lifetime'
-
-export const HELP = [
-  'Keys',
-  '  Enter              send',
-  '  Alt+Enter, Ctrl+J  new line (Shift+Enter too, where the terminal reports it)',
-  '  Tab                switch between list and composer',
-  '  Click              open a conversation from the list',
-  '  PageUp/PageDown    scroll (PageUp at the top loads older)',
-  '  Ctrl+C             quit',
-  '',
-  'Commands',
-  '  /open ADDRESS      start or switch conversation (also /new)',
-  '  /ttl [5m|300]      lifetime of new messages',
-  '  /clear             delete all messages for both of you',
-  '  /retry             retry loading or opening',
-  '  /older             load older messages',
-  '  /address           show your address',
-  '  /log               toggle the debug log',
-  '  /help              show or hide this help',
-  '  /quit              quit (also /exit)',
-  '  //text             send text that starts with /',
-].join('\n')
 
 const CLEAR_CONFIRM_MS = 10_000
 
@@ -60,8 +39,9 @@ export interface CommandHost {
   ttl(): number
   setTtl(seconds: number): void
   open(address: Address): void
-  /** The text of the message on screen, if any. */
+  /** The text of the feedback on screen, if any. */
   shown(): string | null
+  /** Shows a command result, or an error, above the messages. */
   show(text: string, error?: boolean): void
   dismiss(): void
   toggleLog(): void

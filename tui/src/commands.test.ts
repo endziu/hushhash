@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { generateKeypair } from '../../src/shared/keypair'
-import { Commands, HELP, classifyInput, type CommandHost, type CommandSession } from './commands'
+import { Commands, classifyInput, type CommandHost, type CommandSession } from './commands'
+import { HELP } from './help'
 
 function fakeSession(): CommandSession & { cleared: number; retried: string[] } {
   return {

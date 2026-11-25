@@ -1,15 +1,5 @@
 import { expect, test } from 'bun:test'
-import { parseLifetime } from './lifetime'
 import { listItemAt } from './sidebar'
-
-test('parses lifetimes as seconds or labels', () => {
-  expect(parseLifetime('300')).toBe(300)
-  expect(parseLifetime('0300')).toBe(300)
-  expect(parseLifetime('5m')).toBe(300)
-  expect(parseLifetime('24H')).toBe(86400)
-  expect(parseLifetime('7')).toBeNull()
-  expect(parseLifetime('forever')).toBeNull()
-})
 
 test('maps list rows to items, following the list scroll', () => {
   // 10 rows show 5 two-row items.

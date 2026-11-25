@@ -1,5 +1,5 @@
 import { BoxRenderable, TextareaRenderable, type CliRenderer } from '@opentui/core'
-import { COLORS } from './theme'
+import { COLORS, highlightOnFocus } from './theme'
 
 /** The message box. Enter calls `onSubmit`; Alt+Enter, Shift+Enter and Ctrl+J add a line. */
 export class Composer {
@@ -18,6 +18,7 @@ export class Composer {
       onSubmit,
     })
     this.view.add(this.input)
+    highlightOnFocus(this.view, this.input)
   }
 
   get text(): string {
@@ -30,11 +31,6 @@ export class Composer {
 
   focus(): void {
     this.input.focus()
-    this.highlighted = true
-  }
-
-  set highlighted(highlighted: boolean) {
-    this.view.borderColor = highlighted ? COLORS.accent : COLORS.border
   }
 
   clear(): void {

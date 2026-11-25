@@ -1,20 +1,7 @@
 import { TextRenderable, dim, fg, t, type CliRenderer } from '@opentui/core'
-import { checksumAddress, type Address } from '../../src/shared/address'
 import { terminalText } from '../../src/cli/terminal-text'
 import { lifetimeLabel } from './lifetime'
 import { COLORS } from './theme'
-
-/** The top line: who you are and which server you are on. */
-export class Header {
-  readonly view: TextRenderable
-
-  constructor(renderer: CliRenderer, address: Address, server: string) {
-    this.view = new TextRenderable(renderer, {
-      height: 1,
-      content: t` ${fg(COLORS.accent)('hushhash')}  ${checksumAddress(address)} ${dim('(you)')}  ${dim(server)}`,
-    })
-  }
-}
 
 export interface FooterState {
   connected: boolean

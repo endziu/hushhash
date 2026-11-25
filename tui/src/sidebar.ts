@@ -1,7 +1,7 @@
 import { BoxRenderable, SelectRenderable, SelectRenderableEvents, type CliRenderer } from '@opentui/core'
 import { parseAddress, shortAddress, type Address } from '../../src/shared/address'
 import { fmtDay, fmtTime } from '../../src/client/lib/display'
-import { COLORS } from './theme'
+import { COLORS, highlightOnFocus } from './theme'
 
 export interface ConversationEntry {
   address: Address
@@ -61,15 +61,11 @@ export class Sidebar {
       if (address) onOpen(address)
     })
     this.view.add(list)
+    highlightOnFocus(this.view, list)
   }
 
   focus(): void {
     this.list.focus()
-    this.highlighted = true
-  }
-
-  set highlighted(highlighted: boolean) {
-    this.view.borderColor = highlighted ? COLORS.accent : COLORS.border
   }
 
   /**

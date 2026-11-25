@@ -1,3 +1,5 @@
+import { RenderableEvents, type BoxRenderable, type Renderable } from '@opentui/core'
+
 /** The palette every component draws with. */
 export const COLORS = {
   accent: '#7aa2f7',
@@ -8,4 +10,10 @@ export const COLORS = {
   them: '#e0af68',
   error: '#f7768e',
   border: '#3b4261',
+}
+
+/** Lights `frame`'s border while `inner` has focus. */
+export function highlightOnFocus(frame: BoxRenderable, inner: Renderable): void {
+  inner.on(RenderableEvents.FOCUSED, () => { frame.borderColor = COLORS.accent })
+  inner.on(RenderableEvents.BLURRED, () => { frame.borderColor = COLORS.border })
 }

@@ -9,8 +9,9 @@ import { Commands, classifyInput } from './commands'
 import { Composer } from './composer'
 import { mountLayout } from './layout'
 import { Sidebar, type ConversationEntry } from './sidebar'
-import { Footer, Header } from './status-bar'
-import { Transcript } from './transcript'
+import { Footer } from './footer'
+import { createHeader } from './header'
+import { Transcript, type Feedback } from './transcript'
 
 export interface AppOptions {
   server: string
@@ -28,7 +29,6 @@ export interface AppOptions {
  * nor suppresses push notifications.
  */
 export class App {
-  private readonly header: Header
   private readonly footer: Footer
   private readonly sidebar: Sidebar
   private readonly transcript: Transcript
@@ -43,7 +43,7 @@ export class App {
   private readonly attention: TerminalAttention
   private connected = false
   private status = 'Connecting…'
-  private message: { text: string; error: boolean } | null = null
+  private feedback: Feedback | null = null
   private ttl: number
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private readonly tick: ReturnType<typeof setInterval>
@@ -58,13 +58,12 @@ export class App {
     // Like a browser window's focus: only an attentive terminal suppresses push.
     identity.setAttention(this.attention.attentive)
 
-    this.header = new Header(renderer, identity.address, options.server)
     this.sidebar = new Sidebar(renderer, address => this.open(address))
     this.transcript = new Transcript(renderer, identity.address)
     this.composer = new Composer(renderer, () => this.submit())
     this.footer = new Footer(renderer)
     mountLayout(renderer, {
-      header: this.header.view, sidebar: this.sidebar.view, pane: this.transcript.view,
+      header: createHeader(renderer, identity.address, options.server), sidebar: this.sidebar.view, pane: this.transcript.view,
       composer: this.composer.view, footer: this.footer.view,
     }, () => this.attention.input())
     this.commands = new Commands({
@@ -73,9 +72,9 @@ export class App {
       ttl: () => this.ttl,
       setTtl: seconds => { this.ttl = seconds },
       open: address => this.open(address),
-      shown: () => this.message?.text ?? null,
+      shown: () => this.feedback?.text ?? null,
       show: (text, error) => this.show(text, error),
-      dismiss: () => { this.message = null; this.render() },
+      dismiss: () => { this.feedback = null; this.render() },
       toggleLog: () => this.renderer.console.toggle(),
       quit: () => this.stop(),
     })
@@ -88,7 +87,7 @@ export class App {
     renderer.once('destroy', () => this.stop())
     this.tick = setInterval(() => this.renderMessages(), 1000)
 
-    this.focusComposer()
+    this.composer.focus()
     this.render()
     void this.refreshConversations()
     if (options.partner) this.open(options.partner)
@@ -148,11 +147,11 @@ export class App {
       this.stop()
     } else if (key.name === 'tab' && !key.ctrl && !key.meta) {
       key.preventDefault()
-      if (this.composer.focused) this.focusList()
-      else this.focusComposer()
+      if (this.composer.focused) this.sidebar.focus()
+      else this.composer.focus()
     } else if (key.name === 'escape' && this.composer.focused) {
       key.preventDefault()
-      this.focusList()
+      this.sidebar.focus()
     } else if (key.name === 'pageup') {
       key.preventDefault()
       if (this.transcript.atTop) void this.session?.fetchOlder()
@@ -163,18 +162,8 @@ export class App {
     }
   }
 
-  private focusComposer(): void {
-    this.composer.focus()
-    this.sidebar.highlighted = false
-  }
-
-  private focusList(): void {
-    this.sidebar.focus()
-    this.composer.highlighted = false
-  }
-
   private show(text: string, error = false): void {
-    this.message = { text, error }
+    this.feedback = { text, error }
     this.render()
   }
 
@@ -229,8 +218,8 @@ export class App {
     if (!this.conversations.some(conversation => conversation.address === partner)) {
       this.conversations.unshift({ address: partner, last_message_at: null })
     }
-    this.message = null
-    this.focusComposer()
+    this.feedback = null
+    this.composer.focus()
     this.render()
   }
 
@@ -247,7 +236,7 @@ export class App {
     const session = this.session
     if (!session) { this.show('Open a conversation first: /open ADDRESS', true); return }
     this.composer.clear()
-    this.message = null
+    this.feedback = null
     this.render()
     session.send(input.text, this.ttl).catch(error => {
       // Nothing typed is lost: a failed message goes back to an empty composer.
@@ -261,7 +250,7 @@ export class App {
     this.footer.render({ connected: this.connected, status: this.status, ttl: this.ttl, attentive: this.attention.attentive })
     this.renderList()
     this.transcript.renderPane({
-      partner: this.partner, snapshot: this.session?.snapshot() ?? null, message: this.message, attentive: this.attention.attentive,
+      partner: this.partner, snapshot: this.session?.snapshot() ?? null, feedback: this.feedback, attentive: this.attention.attentive,
     })
     this.renderMessages()
   }
