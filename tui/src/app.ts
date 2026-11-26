@@ -19,7 +19,8 @@ import { Toasts, type ToastKind } from './toasts'
 import { Transcript } from './transcript'
 import { NewMessages, newestAccepted } from './message-view'
 import { Outbox } from './outbox'
-import { resolveTheme, setTheme, themeName, type ThemeSetting } from './theme'
+import { followsTerminal, resolveTheme, setTheme, themeName, type ThemeSetting } from './theme'
+import type { DesktopTheme } from './omarchy-theme'
 import { NAME_MAX_LENGTH, TuiState } from './state'
 import { UnreadCounts, unreadBadge } from './unread'
 import { shareContent } from './share'
@@ -41,6 +42,8 @@ export interface AppOptions {
   partner?: Address
   /** Default: system, which follows the terminal's background. */
   theme?: ThemeSetting
+  /** The Omarchy desktop's theme, for the `omarchy` setting; default: none. */
+  desktopTheme?: DesktopTheme
   /** How long attention lasts after input in a terminal that has not reported focus. */
   idleMs?: number
   /** Names, last-seen times and removed conversations; default: kept in memory only. */
@@ -101,6 +104,8 @@ export class App {
   private readonly newMessages = new NewMessages()
   private themeSetting: ThemeSetting
   private terminalTheme: ThemeMode | null
+  private readonly desktopTheme: DesktopTheme | null
+  private stopFollowingDesktop: () => void = () => {}
   private epoch: ConnectionEpoch | null = null
   private readonly attention: TerminalAttention
   private live: LiveStatus = { state: 'connecting' }
@@ -124,7 +129,8 @@ export class App {
     }
     this.themeSetting = options.theme ?? 'system'
     this.terminalTheme = renderer.themeMode
-    setTheme(resolveTheme(this.themeSetting, this.terminalTheme))
+    this.desktopTheme = options.desktopTheme ?? null
+    setTheme(resolveTheme(this.themeSetting, this.terminalTheme, this.desktopTheme?.current))
     this.outbox = new Outbox(identity.address)
     this.notifier = new Notifier({
       notify: (title, message) => renderer.triggerNotification(message, title),
@@ -183,6 +189,7 @@ export class App {
     renderer.on('blur', this.onBlur)
     renderer.on('resize', this.onResize)
     renderer.on('theme_mode', this.onThemeMode)
+    if (this.desktopTheme) this.stopFollowingDesktop = this.desktopTheme.subscribe(() => { if (this.themeSetting === 'omarchy') this.applyTheme() })
     renderer.on('capabilities', this.onCapabilities)
     // Signals destroy the renderer without asking; stop the same way as /quit.
     renderer.once('destroy', () => this.stop())
@@ -231,6 +238,7 @@ export class App {
     this.renderer.off('blur', this.onBlur)
     this.renderer.off('resize', this.onResize)
     this.renderer.off('theme_mode', this.onThemeMode)
+    this.stopFollowingDesktop()
     this.renderer.off('capabilities', this.onCapabilities)
     this.renderer.destroy()
     this.resolveDone()
@@ -254,16 +262,19 @@ export class App {
 
   private readonly onThemeMode = (mode: ThemeMode) => {
     this.terminalTheme = mode
-    if (this.themeSetting === 'system') this.applyTheme()
+    if (followsTerminal(this.themeSetting, this.desktopTheme?.current ?? null)) this.applyTheme()
   }
 
-  private setThemeSetting(setting: ThemeSetting): void {
+  /** Returns why `setting` cannot be used, or null once it is. */
+  private setThemeSetting(setting: ThemeSetting): string | null {
+    if (setting === 'omarchy' && !this.desktopTheme?.current) return 'No Omarchy theme to follow here'
     this.themeSetting = setting
     this.applyTheme()
+    return null
   }
 
   private applyTheme(): void {
-    setTheme(resolveTheme(this.themeSetting, this.terminalTheme))
+    setTheme(resolveTheme(this.themeSetting, this.terminalTheme, this.desktopTheme?.current))
     this.sidebar.applyTheme()
     this.composer.applyTheme()
     this.transcript.applyTheme()

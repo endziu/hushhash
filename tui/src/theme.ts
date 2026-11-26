@@ -30,10 +30,19 @@ export interface Palette {
 
 export type ThemeName = ThemeMode
 
-/** What the user chose: a palette, or whatever the terminal background suits. */
-export type ThemeSetting = ThemeName | 'system'
+/**
+ * What the user chose: a palette, whatever the terminal background suits, or
+ * the Omarchy desktop's colours.
+ */
+export type ThemeSetting = ThemeName | 'system' | 'omarchy'
 
-export const THEME_SETTINGS: readonly ThemeSetting[] = ['system', 'light', 'dark']
+export const THEME_SETTINGS: readonly ThemeSetting[] = ['system', 'omarchy', 'light', 'dark']
+
+/** A palette and whether it is light or dark, which the avatars need. */
+export interface Theme {
+  name: ThemeName
+  palette: Readonly<Palette>
+}
 
 /** Warm palettes in the spirit of the browser's. */
 export const PALETTES: Record<ThemeName, Readonly<Palette>> = {
@@ -87,18 +96,30 @@ export function themeName(): ThemeName {
 }
 
 /** Switches the palette. Components pick it up when they next draw. */
-export function setTheme(name: ThemeName): void {
+export function setTheme(theme: ThemeName | Theme): void {
+  const { name, palette } = typeof theme === 'string' ? { name: theme, palette: PALETTES[theme] } : theme
   current = name
-  Object.assign(COLORS, PALETTES[name])
+  Object.assign(COLORS, palette)
 }
 
 export function parseThemeSetting(value: string): ThemeSetting | null {
   return (THEME_SETTINGS as readonly string[]).includes(value) ? value as ThemeSetting : null
 }
 
-/** The palette for `setting`; `system` follows the terminal, dark when it does not say. */
-export function resolveTheme(setting: ThemeSetting, terminal: ThemeMode | null): ThemeName {
-  return setting === 'system' ? terminal ?? 'dark' : setting
+/**
+ * The theme for `setting`. `system` follows the terminal, dark when it does
+ * not say; `omarchy` uses the desktop's theme, and follows the terminal like
+ * `system` while there is none.
+ */
+export function resolveTheme(setting: ThemeSetting, terminal: ThemeMode | null, desktop: Theme | null = null): Theme {
+  if (setting === 'omarchy' && desktop) return desktop
+  const name = setting === 'system' || setting === 'omarchy' ? terminal ?? 'dark' : setting
+  return { name, palette: PALETTES[name] }
+}
+
+/** Whether `setting` changes with the terminal's background. */
+export function followsTerminal(setting: ThemeSetting, desktop: Theme | null): boolean {
+  return setting === 'system' || (setting === 'omarchy' && !desktop)
 }
 
 /** A QR code is dark on light in every theme, as phone cameras expect. */

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=hushhash-tui
+GenericName=Encrypted chat
+Comment=End-to-end encrypted chat with disappearing messages
+Exec=omarchy-launch-or-focus-tui --app-id=org.omarchy.hushhash hushhash
+TryExec=hushhash
+Icon=hushhash
+Terminal=false
+Categories=Network;Chat;InstantMessaging;
+Keywords=chat;encrypted;messages;
+StartupWMClass=org.omarchy.hushhash

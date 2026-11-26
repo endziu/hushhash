@@ -43,7 +43,7 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     setTtl: seconds => { state.ttl = seconds },
     pickLifetime: () => { state.picks++ },
     theme: () => state.theme,
-    setTheme: setting => { state.theme = setting },
+    setTheme: setting => { state.theme = setting; return null },
     notifications: () => state.notify,
     setNotifications: on => { state.notify = on },
     partner: () => state.partner,
@@ -89,7 +89,7 @@ test('/theme shows, validates and sets the theme', () => {
   const { host, state } = fakeHost()
   const commands = new Commands(host)
   commands.run('/theme')
-  expect(state.toasts.at(-1)).toEqual({ text: 'Theme system. Choose: system, light, dark', kind: 'info' })
+  expect(state.toasts.at(-1)).toEqual({ text: 'Theme system. Choose: system, omarchy, light, dark', kind: 'info' })
   commands.run('/theme sepia')
   expect(state.toasts.at(-1)?.kind).toBe('error')
   expect(state.theme).toBe('system')

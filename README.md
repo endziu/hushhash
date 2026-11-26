@@ -64,7 +64,7 @@ cd tui && bun install
 bun run start --server prod
 ```
 
-See [tui/README.md](tui/README.md).
+See [the TUI guide](docs/tui.md), including how to install it as an Omarchy app.
 
 ## Install
 
@@ -216,7 +216,7 @@ backfill. Only days with activity appear, and today's count is provisional.
 
 An identity counts once per UTC day when a browser explicitly reports foreground
 attention (visible and focused), the full-screen terminal client or CLI `chat`
-reports attention (see [tui/README.md](tui/README.md#attention)), the identity sends an accepted
+reports attention (see [the TUI guide](docs/tui.md#attention)), the identity sends an accepted
 message, or it opens an available message. Attention is refreshed by the existing
 20-second heartbeat, including across midnight. Authentication, passive delivery,
 background browser and terminal connections, message recovery, and lifecycle-state

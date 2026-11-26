@@ -1,0 +1,52 @@
+# Packages the full-screen terminal client from this checkout as an app in the
+# Omarchy launcher (Super + Space). Build and install it with tui/bin/install.
+#
+# It is a Bun bundle run by the system's bun, not a compiled binary: the
+# bundle is about 16 MB where a compiled one carries the Bun runtime and is
+# over 100 MB. OpenTUI's native library in it bundles FFmpeg (LGPL), which
+# matters only if this package is ever given to others.
+
+pkgname=hushhash
+pkgver=r431.4aaae0a
+pkgrel=1
+pkgdesc='End-to-end encrypted chat with disappearing messages, in the terminal'
+arch=('x86_64')
+url='https://hushhash.org'
+license=('LicenseRef-hushhash')
+depends=('bun' 'xdg-terminal-exec')
+makedepends=('git')
+# The bundle loads OpenTUI's native library as is; there is nothing to strip.
+options=('!strip' '!debug')
+source=('hushhash' 'hushhash.desktop')
+sha256sums=('SKIP' 'SKIP')
+
+_repo="$(realpath "$startdir/../..")"
+
+pkgver() {
+  cd "$_repo"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  (cd "$_repo" && bun install --frozen-lockfile)
+  cd "$_repo/tui"
+  bun install --frozen-lockfile
+  # The bundle finds its assets by absolute path, so it runs from any directory.
+  # OpenTUI imports a native package per platform; only this one is bundled.
+  bun build --target=bun src/main.ts \
+    --outdir "$srcdir/app" \
+    --public-path /usr/lib/hushhash/ \
+    --external '@opentui/core-darwin-*' \
+    --external '@opentui/core-win32-*' \
+    --external '@opentui/core-linux-arm64*' \
+    --external '@opentui/core-linux-x64-musl'
+}
+
+package() {
+  install -d "$pkgdir/usr/lib/hushhash"
+  cp -r "$srcdir/app/." "$pkgdir/usr/lib/hushhash/"
+  install -Dm755 hushhash "$pkgdir/usr/bin/hushhash"
+  install -Dm644 hushhash.desktop "$pkgdir/usr/share/applications/hushhash.desktop"
+  install -Dm644 "$_repo/public/favicon.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/hushhash.svg"
+  install -Dm644 "$_repo/public/icon-512.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/hushhash.png"
+}

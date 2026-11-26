@@ -10,6 +10,7 @@ import { HintBar } from './hints'
 import { IdentitySession, OUTDATED } from './identity-session'
 import { Modals } from './modals'
 import { COLORS, resolveTheme, setTheme, type ThemeSetting } from './theme'
+import type { DesktopTheme } from './omarchy-theme'
 
 export interface FirstRunOptions {
   server: string
@@ -17,6 +18,8 @@ export interface FirstRunOptions {
   identityPath: string
   /** Default: system, which follows the terminal's background. */
   theme?: ThemeSetting
+  /** The Omarchy desktop's theme, for the `omarchy` setting. */
+  desktopTheme?: DesktopTheme
 }
 
 type Choice = 'create' | 'import' | 'quit'
@@ -48,7 +51,7 @@ export class FirstRun {
   private stopped = false
 
   constructor(private readonly renderer: CliRenderer, private readonly options: FirstRunOptions) {
-    setTheme(resolveTheme(options.theme ?? 'system', renderer.themeMode))
+    setTheme(resolveTheme(options.theme ?? 'system', renderer.themeMode, options.desktopTheme?.current))
     this.root = new BoxRenderable(renderer, { width: '100%', height: '100%', flexDirection: 'column' })
     const body = new BoxRenderable(renderer, { flexGrow: 1, justifyContent: 'center', alignItems: 'center' })
     this.status = new TextRenderable(renderer, { content: '', fg: COLORS.muted })

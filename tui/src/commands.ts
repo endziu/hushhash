@@ -41,7 +41,8 @@ export interface CommandHost {
   /** Lists the lifetimes to pick one from. */
   pickLifetime(): void
   theme(): ThemeSetting
-  setTheme(setting: ThemeSetting): void
+  /** Returns why `setting` cannot be used, or null once it is. */
+  setTheme(setting: ThemeSetting): string | null
   /** Whether a message that arrives while you are away notifies the desktop. */
   notifications(): boolean
   setNotifications(on: boolean): void
@@ -107,8 +108,9 @@ export class Commands {
         if (!arg) { host.toast(`Theme ${host.theme()}. Choose: ${choices}`); return true }
         const setting = parseThemeSetting(arg)
         if (!setting) { host.toast(`Choose a theme: ${choices}`, 'error'); return true }
-        host.setTheme(setting)
-        host.toast(setting === 'system' ? 'Theme follows the terminal' : `Theme ${setting}`, 'success')
+        const problem = host.setTheme(setting)
+        if (problem) { host.toast(problem, 'error'); return true }
+        host.toast(setting === 'system' ? 'Theme follows the terminal' : setting === 'omarchy' ? 'Theme follows Omarchy' : `Theme ${setting}`, 'success')
         return true
       }
       case '/notify': {

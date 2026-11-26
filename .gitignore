@@ -20,3 +20,8 @@ chat.db*
 *.swp
 .idea/
 .vscode/
+
+# makepkg output for the TUI package
+tui/pkgbuild/src/
+tui/pkgbuild/pkg/
+tui/pkgbuild/*.pkg.tar.*

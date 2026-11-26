@@ -1,0 +1,6 @@
+#!/bin/sh
+# Builds the hushhash package from this checkout and installs it, so the TUI
+# shows up in the Omarchy launcher. Run it again after changes you want there.
+set -e
+cd "$(dirname "$0")/../pkgbuild"
+makepkg -fsi --noconfirm
