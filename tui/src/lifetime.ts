@@ -14,3 +14,8 @@ export function parseLifetime(value: string): number | null {
   const lifetime = MESSAGE_LIFETIMES.find(({ seconds, label }) => numeric ? seconds === Number(trimmed) : label === trimmed)
   return lifetime?.seconds ?? null
 }
+
+/** What a change of lifetime means, for a toast. */
+export function lifetimeNotice(seconds: number): string {
+  return `New messages disappear ${lifetimeLabel(seconds)} after they are opened`
+}

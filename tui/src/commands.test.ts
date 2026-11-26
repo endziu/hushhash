@@ -34,11 +34,13 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     quit: false,
     shared: 0,
     keys: 0,
+    picks: 0,
   }
   const host: CommandHost = {
     session: () => session,
     ttl: () => state.ttl,
     setTtl: seconds => { state.ttl = seconds },
+    pickLifetime: () => { state.picks++ },
     theme: () => state.theme,
     setTheme: setting => { state.theme = setting },
     partner: () => state.partner,
@@ -66,11 +68,12 @@ test('classifies composer input', () => {
   expect(classifyInput('//a\nb')).toEqual({ type: 'message', text: '//a\nb' })
 })
 
-test('/ttl shows, validates and sets the lifetime', () => {
+test('/ttl opens the picker, validates and sets the lifetime', () => {
   const { host, state } = fakeHost()
   const commands = new Commands(host)
   expect(commands.run('/ttl')).toBe(true)
-  expect(state.toasts.at(-1)).toEqual({ text: expect.stringMatching(/^Lifetime 30m\./), kind: 'info' })
+  expect(state.picks).toBe(1)
+  expect(state.toasts).toEqual([])
   commands.run('/ttl forever')
   expect(state.toasts.at(-1)?.kind).toBe('error')
   expect(state.ttl).toBe(1800)

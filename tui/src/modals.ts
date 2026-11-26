@@ -1,9 +1,11 @@
 import {
   BoxRenderable, InputRenderable, InputRenderableEvents, ScrollBoxRenderable, StyledText, TextRenderable,
-  bg, fg, t, type CliRenderer, type KeyEvent, type Renderable,
+  bg, bold, fg, t, type CliRenderer, type KeyEvent, type Renderable,
 } from '@opentui/core'
 import { PRIORITY, type Priority } from './bar'
 import type { Hint } from './hints'
+import { fitText } from './sidebar'
+import { joinLines } from './styled'
 import { COLORS, LAYERS } from './theme'
 
 export interface ModalOptions {
@@ -29,6 +31,35 @@ export interface PromptOptions {
   action?: string
   /** A problem with `value` to show under the input, or null to accept it. */
   validate?: (value: string) => string | null
+}
+
+/** One line in a list to choose from. */
+export interface ChoiceItem<T> {
+  /** Already safe to show. */
+  label: string
+  /** Muted, after the label. */
+  detail?: string
+  /** Marked with a dot, such as the one in use. */
+  marked?: boolean
+  value: T
+}
+
+export interface ChooseOptions<T> {
+  title: string
+  /** Columns, borders included; never more than 90% of the screen. */
+  width?: number
+  /** A line above the list. */
+  label?: string
+  /** Shows a line to type a filter into, with this placeholder. */
+  filter?: string
+  /** The items for what is typed in the filter; '' without one. */
+  items: (query: string) => readonly ChoiceItem<T>[]
+  /** The item selected at first. */
+  initial?: number
+  /** What Enter does, for the hint bar, such as "open". */
+  action: string
+  /** Shown when there are no items. */
+  empty?: string
 }
 
 /** A key a panel answers to, and what it does there. */
@@ -212,6 +243,83 @@ export class Modals {
   }
 
   /**
+   * Lists items to pick one from; its value, or null if cancelled. With a
+   * filter, what is typed chooses the items. ↑↓ move, Enter or a click picks.
+   */
+  choose<T>({ title, width = DEFAULT_WIDTH, label, filter, items, initial = 0, action, empty = 'Nothing to choose' }: ChooseOptions<T>): Promise<T | null> {
+    return this.present<T | null>(null, finish => {
+      const frame = this.frame(title, width)
+      if (label) frame.add(this.text(label, { marginBottom: 1 }))
+      const input = filter === undefined ? null : new InputRenderable(this.renderer, { placeholder: filter, width: '100%', flexShrink: 0 })
+      let shown = items('')
+      let selected = Math.max(0, Math.min(initial, shown.length - 1))
+      // The first item drawn, so the selected one stays in view.
+      let offset = 0
+      const list = new TextRenderable(this.renderer, {
+        content: '', flexShrink: 0, marginTop: input ? 1 : 0,
+        onMouseDown: event => {
+          if (event.button !== 0) return
+          event.preventDefault()
+          const item = shown[offset + event.y - list.screenY]
+          if (item) finish(item.value)
+        },
+      })
+      const room = () => Math.max(1, this.innerHeight() - (input ? 2 : 0) - (label ? 2 : 0))
+      const draw = () => {
+        const rows = Math.min(Math.max(1, shown.length), room())
+        offset = Math.max(0, Math.min(offset, selected), selected - rows + 1)
+        list.height = rows
+        list.content = shown.length
+          ? choiceLines(shown.slice(offset, offset + rows), selected - offset, this.innerWidth(width))
+          : t`${fg(COLORS.muted)(empty)}`
+      }
+      const move = (by: number) => {
+        if (!shown.length) return
+        selected = (selected + by + shown.length) % shown.length
+        draw()
+      }
+      if (input) {
+        this.themed(() => {
+          input.textColor = input.focusedTextColor = COLORS.text
+          input.placeholderColor = COLORS.muted
+          input.backgroundColor = input.focusedBackgroundColor = COLORS.selection
+        })
+        input.on(InputRenderableEvents.INPUT, (query: string) => {
+          shown = items(query)
+          selected = 0
+          offset = 0
+          draw()
+        })
+        frame.add(input)
+      }
+      this.themed(draw)
+      this.renderer.on('resize', draw)
+      frame.add(list)
+      return {
+        frame,
+        hints: [
+          { keys: '↑↓', action: 'move', priority: PRIORITY.high },
+          { keys: 'Enter', action, priority: PRIORITY.essential },
+          { keys: 'Esc', action: 'cancel', priority: PRIORITY.essential },
+        ],
+        focus: input ?? undefined,
+        dispose: () => this.renderer.off('resize', draw),
+        // Typing reaches the filter; the keys that choose do not.
+        onKey: key => {
+          const name = key.name
+          const choosing = name === 'up' || name === 'down' || name === 'return' || name === 'escape' || name === 'tab'
+            || (key.ctrl && (name === 'p' || name === 'n'))
+          if (!input || choosing) key.preventDefault()
+          if (name === 'escape') finish(null)
+          else if (name === 'up' || (key.ctrl && name === 'p')) move(-1)
+          else if (name === 'down' || (key.ctrl && name === 'n')) move(1)
+          else if (name === 'return' && shown[selected]) finish(shown[selected]!.value)
+        },
+      }
+    })
+  }
+
+  /**
    * Asks before a destructive action; true if it was chosen. Cancel is
    * selected first, so a stray Enter does nothing harmful.
    */
@@ -378,6 +486,20 @@ export class Modals {
 function wrappedRows(body: string | StyledText, width: number): number {
   const text = typeof body === 'string' ? body : body.chunks.map(chunk => chunk.text).join('')
   return text.split('\n').reduce((rows, line) => rows + Math.max(1, Math.ceil(line.length / width)), 0)
+}
+
+/** The items on screen, one a line, `selected` highlighted across the width. */
+function choiceLines(items: readonly ChoiceItem<unknown>[], selected: number, width: number): StyledText {
+  const lines = items.map((item, index) => {
+    const mark = item.marked ? '● ' : '  '
+    const label = fitText(`${mark}${item.label}`, width)
+    const detail = item.detail ? fitText(`  ${item.detail}`, width - Bun.stringWidth(label)) : ''
+    const pad = ' '.repeat(Math.max(0, width - Bun.stringWidth(label) - Bun.stringWidth(detail)))
+    if (index !== selected) return t`${fg(COLORS.text)(label)}${fg(COLORS.muted)(detail)}${pad}`
+    const on = bg(COLORS.selection)
+    return t`${on(bold(fg(COLORS.accent)(label)))}${on(fg(COLORS.muted)(detail))}${on(pad)}`
+  })
+  return joinLines(lines)
 }
 
 function buttonText(label: string, selected: boolean, destructive: boolean): StyledText {

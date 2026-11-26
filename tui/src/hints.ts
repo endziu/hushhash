@@ -13,6 +13,8 @@ export const COMPOSER_HINTS: readonly Hint[] = [
   { keys: 'Enter', action: 'send', priority: PRIORITY.essential },
   { keys: 'Alt+Enter', action: 'new line', priority: PRIORITY.normal },
   { keys: 'Tab/Esc', action: 'list', priority: PRIORITY.high },
+  { keys: 'Ctrl+K', action: 'switch', priority: PRIORITY.normal },
+  { keys: 'Ctrl+T', action: 'lifetime', priority: PRIORITY.low },
   { keys: 'PgUp/PgDn', action: 'scroll', priority: PRIORITY.low },
   { keys: 'Ctrl+B', action: 'hide list', priority: PRIORITY.lowest },
   { keys: 'F1', action: 'help', priority: PRIORITY.essential },
@@ -23,12 +25,30 @@ export const LIST_HINTS: readonly Hint[] = [
   { keys: '↑↓', action: 'move', priority: PRIORITY.high },
   { keys: 'Enter', action: 'open', priority: PRIORITY.essential },
   { keys: 'Tab', action: 'composer', priority: PRIORITY.high },
+  { keys: '/', action: 'filter', priority: PRIORITY.normal },
   { keys: 'r', action: 'name', priority: PRIORITY.normal },
   { keys: 'd', action: 'remove', priority: PRIORITY.low },
   { keys: 's', action: 'share', priority: PRIORITY.low },
   { keys: 'PgUp/PgDn', action: 'scroll', priority: PRIORITY.low },
   { keys: 'Ctrl+B', action: 'hide list', priority: PRIORITY.lowest },
   { keys: '?', action: 'help', priority: PRIORITY.essential },
+  { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
+]
+
+/** While the list is filtered: typing changes the filter. */
+export const FILTER_HINTS: readonly Hint[] = [
+  { keys: '↑↓', action: 'move', priority: PRIORITY.high },
+  { keys: 'Enter', action: 'open', priority: PRIORITY.essential },
+  { keys: 'Esc', action: 'clear filter', priority: PRIORITY.essential },
+  { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
+]
+
+/** While the command list shows above the composer. */
+export const COMPLETION_HINTS: readonly Hint[] = [
+  { keys: '↑↓', action: 'choose', priority: PRIORITY.high },
+  { keys: 'Tab', action: 'complete', priority: PRIORITY.essential },
+  { keys: 'Enter', action: 'run', priority: PRIORITY.essential },
+  { keys: 'Esc', action: 'dismiss', priority: PRIORITY.high },
   { keys: 'Ctrl+C', action: 'quit', priority: PRIORITY.lower },
 ]
 

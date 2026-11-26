@@ -2,7 +2,7 @@ import { parseAddress, type Address } from '../../src/shared/address'
 import { errorMessage } from '../../src/client/lib/errors'
 import { terminalText } from '../../src/cli/terminal-text'
 import { HELP_MODAL } from './help'
-import { LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './lifetime'
+import { LIFETIME_CHOICES_TEXT, lifetimeNotice, parseLifetime } from './lifetime'
 import type { ConfirmOptions, ModalOptions } from './modals'
 import { THEME_SETTINGS, parseThemeSetting, type ThemeSetting } from './theme'
 import type { ToastKind } from './toasts'
@@ -38,6 +38,8 @@ export interface CommandHost {
   session(): CommandSession | null
   ttl(): number
   setTtl(seconds: number): void
+  /** Lists the lifetimes to pick one from. */
+  pickLifetime(): void
   theme(): ThemeSetting
   setTheme(setting: ThemeSetting): void
   /** The open conversation's partner, or null. */
@@ -90,11 +92,11 @@ export class Commands {
         return true
       }
       case '/ttl': {
-        if (!arg) { host.toast(`Lifetime ${lifetimeLabel(host.ttl())}. Choose: ${LIFETIME_CHOICES_TEXT}`); return true }
+        if (!arg) { host.pickLifetime(); return true }
         const seconds = parseLifetime(arg)
         if (seconds === null) { host.toast(`Choose a lifetime: ${LIFETIME_CHOICES_TEXT}`, 'error'); return true }
         host.setTtl(seconds)
-        host.toast(`New messages disappear ${lifetimeLabel(seconds)} after they are opened`, 'success')
+        host.toast(lifetimeNotice(seconds), 'success')
         return true
       }
       case '/theme': {
