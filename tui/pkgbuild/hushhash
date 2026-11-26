@@ -1,0 +1,6 @@
+#!/bin/sh
+# The installed client talks to hushhash.org unless HUSHHASH_SERVER or
+# --server names another. --no-install keeps bun from fetching packages: the
+# bundle has everything it runs.
+export HUSHHASH_SERVER="${HUSHHASH_SERVER:-prod}"
+exec bun --no-install /usr/lib/hushhash/main.js "$@"

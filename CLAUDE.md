@@ -14,7 +14,8 @@ Commands, environment variables, rate limits, and retention rules are in the REA
 - `tui/` is a separate package (OpenTUI terminal client) with its own `package.json`, lockfile and
   checks: `cd tui && bun install && bun run typecheck && bun run lint && bun run test`. It imports
   `src/shared`, `src/cli` and browser `src/client/lib` modules, so run its checks after changing those.
-  Root `bun test` ignores `tui/` (see `bunfig.toml`).
+  Root `bun test` ignores `tui/` (see `bunfig.toml`). `docs/tui.md` documents it all, including the
+  Omarchy package in `tui/pkgbuild/`; keep it current when the TUI changes.
 
 ## Agent skills
 
