@@ -32,9 +32,10 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     names: [] as [Address, string][],
     removed: [] as Address[],
     quit: false,
+    shared: 0,
+    keys: 0,
   }
   const host: CommandHost = {
-    address: generateKeypair().address,
     session: () => session,
     ttl: () => state.ttl,
     setTtl: seconds => { state.ttl = seconds },
@@ -45,6 +46,8 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     rename: (address, name) => { state.names.push([address, name]) },
     remove: async address => { state.removed.push(address) },
     toast: (text, kind = 'info') => { state.toasts.push({ text, kind }) },
+    share: () => { state.shared++ },
+    showKey: () => { state.keys++ },
     modal: async options => { state.modals.push(options) },
     confirm: async () => { state.confirms++; return state.confirmAnswer },
     toggleLog: () => {},
@@ -155,14 +158,17 @@ test('/clear without a conversation asks to open one', () => {
   expect(state.toasts).toEqual([{ text: 'Open a conversation first', kind: 'error' }])
 })
 
-test('/help and /address open modals; /retry retries what failed', () => {
+test('/help opens help, /share and /address share, /key shows the key; /retry retries what failed', () => {
   const session = fakeSession()
   const { host, state } = fakeHost(session)
   const commands = new Commands(host)
   commands.run('/help')
+  expect(state.modals).toEqual([HELP_MODAL])
+  commands.run('/share')
   commands.run('/address')
-  expect(state.modals[0]).toBe(HELP_MODAL)
-  expect(state.modals[1]?.title).toBe('Your address')
+  expect(state.shared).toBe(2)
+  commands.run('/key')
+  expect(state.keys).toBe(1)
 
   commands.run('/retry')
   session.snapshot = () => ({ openingFailed: true })

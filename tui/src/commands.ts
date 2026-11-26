@@ -1,4 +1,4 @@
-import { checksumAddress, parseAddress, type Address } from '../../src/shared/address'
+import { parseAddress, type Address } from '../../src/shared/address'
 import { errorMessage } from '../../src/client/lib/errors'
 import { terminalText } from '../../src/cli/terminal-text'
 import { HELP_MODAL } from './help'
@@ -34,7 +34,6 @@ export interface CommandSession {
 
 /** What commands can read and change in the app. */
 export interface CommandHost {
-  readonly address: Address
   /** The open conversation, or null before one is opened. */
   session(): CommandSession | null
   ttl(): number
@@ -49,6 +48,10 @@ export interface CommandHost {
   /** Asks, then removes a conversation from this device's list. */
   remove(address: Address): Promise<void>
   toast(text: string, kind?: ToastKind): void
+  /** Shows your address, conversation link and their QR code. */
+  share(): void
+  /** Shows your key, hidden until asked. */
+  showKey(): void
   modal(options: ModalOptions): Promise<void>
   confirm(options: ConfirmOptions): Promise<boolean>
   toggleLog(): void
@@ -115,8 +118,12 @@ export class Commands {
       case '/older':
         void host.session()?.fetchOlder()
         return true
+      case '/share':
       case '/address':
-        void host.modal({ title: 'Your address', body: `${checksumAddress(host.address)}\n\nShare it so people can message you.` })
+        host.share()
+        return true
+      case '/key':
+        host.showKey()
         return true
       case '/log':
         host.toggleLog()

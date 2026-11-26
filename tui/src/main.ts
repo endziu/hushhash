@@ -69,7 +69,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     })
     const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
     const state = TuiState.load(statePath(identityPath), identity.address)
-    const app = new App(renderer, identitySession, { server, ttl, partner, theme, state })
+    const app = new App(renderer, identitySession, { server, ttl, partner, theme, state, identityPath })
     await app.run()
     await renderer.closed
   } finally {

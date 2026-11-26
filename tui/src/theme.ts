@@ -101,6 +101,9 @@ export function resolveTheme(setting: ThemeSetting, terminal: ThemeMode | null):
   return setting === 'system' ? terminal ?? 'dark' : setting
 }
 
+/** A QR code is dark on light in every theme, as phone cameras expect. */
+export const QR_COLORS = { dark: '#000000', light: '#ffffff' } as const
+
 /** Stacking order of what is drawn above the layout. */
 export const LAYERS = {
   modal: 100,

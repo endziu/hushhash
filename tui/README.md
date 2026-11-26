@@ -26,7 +26,7 @@ where the terminal reports that.
 The top line shows the live connection (`● connected`, `◐ reconnecting in 4s` with a countdown to
 the next attempt, or `○ offline` after three failed attempts in a row, with the reason when it
 fits), the server (`prod`, `local` or its host), the lifetime of new messages, `away` while you
-are away (see [Attention](#attention)) and your avatar and address in short form; `/address`
+are away (see [Attention](#attention)) and your avatar and address in short form; `/share`
 shows it in full. The bottom line shows the keys that work where you are: the composer, the conversation list
 or an open dialog. A narrow terminal drops the less important parts of both lines first.
 
@@ -41,17 +41,18 @@ or an open dialog. A narrow terminal drops the less important parts of both line
 | Enter in the list | Open that conversation |
 | r in the list | Name that conversation |
 | d in the list | Remove that conversation from the list (asks first) |
+| s in the list | Share your address: a QR code and your conversation link |
 | Click in the list | Open that conversation; the mouse wheel moves the highlight |
 | PageUp / PageDown | Scroll; PageUp at the top loads older messages |
 | Ctrl+C | Quit |
 
 Commands typed in the composer: `/open ADDRESS [NAME]` (or `/new`), `/name [NAME]`, `/remove`, `/ttl [5m|300]`, `/theme [system|light|dark]`, `/clear` (asks in a
-dialog first), `/retry`, `/older`, `/address`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
+dialog first), `/retry`, `/older`, `/share` (or `/address`), `/key`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
 single line; multi-line text that starts with `/` is sent as a message. Start a one-line message
 with `//` to send text that begins with `/`; multi-line text is sent as typed. A mistyped command
 stays in the composer.
 
-Help, `/address` and `/clear` open a dialog over the screen. While it is open it takes every key;
+Help, `/share`, `/key` and `/clear` open a dialog over the screen. While it is open it takes every key;
 Esc or a click outside closes it. `/clear` starts on Cancel, so Enter alone does not delete
 anything: choose Delete with →, or press y.
 
@@ -100,6 +101,27 @@ arrives, and only what came after the removal counts as unread.
 All three are kept in `tui-state.json` beside the identity file, mode 0600, keyed by your address
 so several identities can share it. Nothing in it leaves the machine, and it is separate from the
 browser's names. A missing or unreadable file starts empty.
+
+## Share, links and your key
+
+`/share`, `/address` or s in the list shows your full address, your conversation link on this
+server and a QR code of the link. A phone camera opens the link. The code is drawn dark on light
+whatever the theme, so it scans in a dark terminal too; if the terminal is too small for it, the
+dialog says how large it needs to be. c copies the address and l the link.
+
+Copying goes through the terminal (OSC 52), which most modern terminals support; tmux needs
+`set -g set-clipboard on`. A terminal that cannot copy says so, and you can select the text
+instead.
+
+http and https links in messages are underlined in the accent colour. Where the terminal supports
+hyperlinks (OSC 8) they are clickable, usually with Ctrl or Cmd held. Nothing else becomes a link.
+
+`/key` backs up your key without leaving the TUI. It shows your address and where the identity file
+is, with the private key hidden until v shows it; c copies it. The key hides again when the dialog
+closes or you look away (see [Attention](#attention)). Anyone with the key can read your messages
+and send messages as you, so keep it secret, and never import a key from a crypto wallet that holds
+money or anything else of value. Your clipboard and terminal scrollback may keep the key after you
+copy or show it. To import or replace a key, use the CLI's `import`.
 
 ## Attention
 
