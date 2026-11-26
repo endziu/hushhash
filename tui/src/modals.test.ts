@@ -205,3 +205,41 @@ test('a modal fits its body again when the terminal is resized', async () => {
   setup.resize(80, 24)
   expect(await frame()).toContain('row 11')
 })
+
+test('a panel runs its keys, redraws on refresh and says once when it closes', async () => {
+  let count = 0
+  let closes = 0
+  const panel = modals.panel({
+    title: 'Counter',
+    content: ({ columns }) => `count ${count} in ${columns} columns`,
+    keys: [{ key: 'k', action: 'count', run: () => { count++; panel.refresh() } }],
+    onClose: () => { closes++ },
+  })
+  expect(await frame()).toContain('count 0 in 60 columns')
+  expect(underneath.focused).toBe(false)
+  await setup.mockInput.typeText('kkx')
+  expect(await frame()).toContain('count 2 in 60 columns')
+  expect(keysUnderneath).toEqual([])
+  // Alt+k is not k.
+  setup.mockInput.pressKey('k', { meta: true })
+  expect(await frame()).toContain('count 2')
+
+  setup.mockInput.pressEscape()
+  await panel.closed
+  expect(closes).toBe(1)
+  expect(await frame()).not.toContain(' Counter ')
+  expect(underneath.focused).toBe(true)
+  panel.refresh()
+  expect(closes).toBe(1)
+})
+
+test('a panel replaced by another modal closes once', async () => {
+  let closes = 0
+  const panel = modals.panel({ title: 'First', content: () => 'first', keys: [], onClose: () => { closes++ } })
+  void modals.show({ title: 'Second', body: 'second' })
+  await panel.closed
+  expect(closes).toBe(1)
+  expect(await frame()).toContain(' Second ')
+  modals.close()
+  expect(closes).toBe(1)
+})

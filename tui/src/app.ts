@@ -19,9 +19,13 @@ import { Toasts, type ToastKind } from './toasts'
 import { Transcript } from './transcript'
 import { NewMessages, newestAccepted } from './message-view'
 import { Outbox } from './outbox'
-import { resolveTheme, setTheme, type ThemeSetting } from './theme'
+import { resolveTheme, setTheme, themeName, type ThemeSetting } from './theme'
 import { NAME_MAX_LENGTH, TuiState } from './state'
 import { UnreadCounts, unreadBadge } from './unread'
+import { shareContent } from './share'
+import { keyContent } from './key-backup'
+import { avatarGrid, avatarRows, canDrawAvatars } from './avatar'
+import { conversationUrl } from '../../src/client/lib/address-links'
 
 // How many of a conversation's newest messages are fetched to count its unread ones.
 const UNREAD_PAGE = 20
@@ -36,6 +40,8 @@ export interface AppOptions {
   idleMs?: number
   /** Names, last-seen times and removed conversations; default: kept in memory only. */
   state?: TuiState
+  /** Where the identity file is, for the Key panel. */
+  identityPath?: string
 }
 
 /**
@@ -63,6 +69,8 @@ export class App {
   private readonly counting = new Set<Address>()
   /** The newest message on screen when you switched away from each conversation, if any. */
   private readonly lastLooked = new Map<Address, number | null>()
+  /** Hides the key in the open Key panel, if it is open. */
+  private hideKey: (() => void) | null = null
   private session: ConversationSession | null = null
   private partner: Address | null = null
   private readonly outbox: Outbox
@@ -115,7 +123,6 @@ export class App {
     this.sidebar.onFocusChange(focused => { if (focused) this.showList(true); this.renderHints() })
     this.toasts = new Toasts(renderer, root)
     this.commands = new Commands({
-      address: identity.address,
       session: () => this.session,
       ttl: () => this.ttl,
       setTtl: seconds => { this.ttl = seconds; this.render() },
@@ -126,6 +133,8 @@ export class App {
       rename: (address, name) => this.rename(address, name),
       remove: address => this.confirmRemove(address),
       toast: (text, kind) => this.toast(text, kind),
+      share: () => this.share(),
+      showKey: () => this.showKey(),
       modal: options => this.modals.show(options),
       confirm: options => this.modals.confirm(options),
       toggleLog: () => this.renderer.console.toggle(),
@@ -229,7 +238,11 @@ export class App {
   }
 
   private attentionChanged(attentive: boolean): void {
-    if (!attentive) this.newMessages.away(this.newestShown())
+    if (!attentive) {
+      this.newMessages.away(this.newestShown())
+      // Whoever is at the screen now may not be you.
+      this.hideKey?.()
+    }
     this.identity.setAttention(attentive)
     this.session?.attentionChanged(attentive)
     this.render()
@@ -245,6 +258,9 @@ export class App {
     } else if (key.name === 'f1' || (key.name === '?' && this.sidebar.focused)) {
       key.preventDefault()
       void this.modals.show(HELP_MODAL)
+    } else if (this.sidebar.focused && !key.ctrl && !key.meta && key.name === 's') {
+      key.preventDefault()
+      this.share()
     } else if (this.sidebar.focused && !key.ctrl && !key.meta && (key.name === 'r' || key.name === 'd')) {
       key.preventDefault()
       const address = this.sidebar.highlighted
@@ -299,6 +315,56 @@ export class App {
     this.layout.toggleSidebar()
     if (this.layout.collapsed && this.sidebar.focused) this.focusComposer()
     this.render()
+  }
+
+  /** Copies `text` to the clipboard through the terminal (OSC 52), saying whether it could. */
+  private copy(text: string, what: string): void {
+    if (this.renderer.copyToClipboardOSC52(text)) this.toast(`${what} copied`, 'success')
+    else this.toast(`This terminal cannot copy (it lacks OSC 52); select the ${what.toLowerCase()} instead`, 'error')
+  }
+
+  /** Your avatar's rows, when the terminal can draw it. */
+  private ownAvatar() {
+    return canDrawAvatars(this.renderer.capabilities) ? avatarRows(avatarGrid(this.identity.address, themeName())) : null
+  }
+
+  /** The Share panel: your address and conversation link, and a QR code of the link. */
+  private share(): void {
+    const address = this.identity.address
+    const link = conversationUrl(address, this.options.server)
+    this.modals.panel({
+      title: 'Share',
+      width: 84,
+      content: space => shareContent({ address, link }, space, { columns: this.renderer.width, rows: this.renderer.height }),
+      keys: [
+        { key: 'c', action: 'copy address', run: () => this.copy(checksumAddress(address), 'Address') },
+        { key: 'l', action: 'copy link', run: () => this.copy(link, 'Link') },
+      ],
+    })
+  }
+
+  /**
+   * The Key panel: your key, hidden until v shows it. It hides again when
+   * the panel closes or you look away.
+   */
+  private showKey(): void {
+    const { address, privateKey } = this.identity.identity
+    let revealed = false
+    const panel = this.modals.panel({
+      title: 'Your key',
+      width: 80,
+      content: () => keyContent({ address, privateKey, path: this.options.identityPath ?? null, revealed, avatar: this.ownAvatar() }),
+      keys: [
+        { key: 'v', action: 'show or hide', run: () => { revealed = !revealed; panel.refresh() } },
+        { key: 'c', action: 'copy key', run: () => this.copy(privateKey, 'Private key') },
+      ],
+      onClose: () => {
+        revealed = false
+        if (this.hideKey === hide) this.hideKey = null
+      },
+    })
+    const hide = () => { if (revealed) { revealed = false; panel.refresh() } }
+    this.hideKey = hide
   }
 
   private toast(text: string, kind: ToastKind = 'info'): void {

@@ -5,6 +5,7 @@ import { fmtTime } from '../../src/client/lib/display'
 import { terminalText } from '../../src/cli/terminal-text'
 import { AVATAR_COLUMNS, avatarGrid, avatarRows, canDrawAvatars } from './avatar'
 import { HELP } from './help'
+import { messageText } from './links'
 import { layoutRows, messageMeta, type ExpiryTone, type MessageState, type RowLayout, type ShownMessage } from './message-view'
 import { COLORS, themeName } from './theme'
 
@@ -44,7 +45,7 @@ class MessageRow {
   private readonly bubble: BoxRenderable
   private readonly text: TextRenderable
   private readonly meta: TextRenderable
-  /** What `text` shows, so the tick only sets it when it changes. */
+  /** What `text` was drawn from, so the tick only sets it when that changes. */
   private shown: string | null = null
 
   constructor(renderer: CliRenderer, readonly mine: boolean) {
@@ -61,7 +62,8 @@ class MessageRow {
     for (const part of [this.day, this.divider, this.header, this.bubble]) this.view.add(part)
   }
 
-  render(layout: RowLayout, message: ShownMessage, partnerLabel: string, now: number): void {
+  /** `hyperlinks`: the terminal can make links clickable. */
+  render(layout: RowLayout, message: ShownMessage, partnerLabel: string, now: number, hyperlinks: boolean): void {
     this.day.visible = layout.day !== null
     if (layout.day !== null) this.day.content = t`${fg(COLORS.muted)(`── ${layout.day} ──`)}`
     this.divider.visible = layout.firstNew
@@ -78,9 +80,11 @@ class MessageRow {
     this.bubble.backgroundColor = this.mine ? COLORS.bubbleYou : COLORS.bubbleThem
     // The text fades in its last seconds, before it disappears.
     this.text.fg = meta.tone === 'critical' ? COLORS.muted : COLORS.text
-    if (message.plaintext !== this.shown) {
-      this.shown = message.plaintext
-      this.text.content = terminalText(message.plaintext, { newlines: true })
+    // Links take the accent colour, so a new palette draws them again.
+    const shown = `${themeName()} ${hyperlinks} ${message.plaintext}`
+    if (shown !== this.shown) {
+      this.shown = shown
+      this.text.content = messageText(message.plaintext, hyperlinks)
     }
     const label = fg(meta.state === 'failed' ? COLORS.error : TONE_COLOR[meta.tone]())(meta.label)
     this.meta.content = meta.icon ? t`${label} ${fg(STATE_COLOR[meta.state]())(meta.icon)}` : t`${label}`
@@ -152,7 +156,7 @@ export class Transcript {
       this.avatar.visible = false
       if (back) this.title.content = back
       this.notice.visible = true
-      this.notice.content = t`${fg(COLORS.muted)(`Your address is ${checksumAddress(this.self)}\n\nShare it, then start a conversation with /open 0xADDRESS, or pick one on the left.\n\n${HELP}`)}`
+      this.notice.content = t`${fg(COLORS.muted)(`Your address is ${checksumAddress(this.self)}\n\nShare it (/share shows a QR code), then start a conversation with /open 0xADDRESS, or pick one on the left.\n\n${HELP}`)}`
       return
     }
     this.view.title = ''
@@ -196,7 +200,8 @@ export class Transcript {
       this.order = keys
     }
     const layouts = layoutRows(messages, this.self, now, firstNewKey)
-    messages.forEach((message, index) => this.rows.get(message.key)!.render(layouts[index]!, message, partnerLabel, now))
+    const hyperlinks = this.renderer.capabilities?.hyperlinks === true
+    messages.forEach((message, index) => this.rows.get(message.key)!.render(layouts[index]!, message, partnerLabel, now, hyperlinks))
   }
 }
 

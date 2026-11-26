@@ -2,7 +2,7 @@ import {
   BoxRenderable, InputRenderable, InputRenderableEvents, ScrollBoxRenderable, StyledText, TextRenderable,
   bg, fg, t, type CliRenderer, type KeyEvent, type Renderable,
 } from '@opentui/core'
-import { PRIORITY } from './bar'
+import { PRIORITY, type Priority } from './bar'
 import type { Hint } from './hints'
 import { COLORS, LAYERS } from './theme'
 
@@ -29,6 +29,40 @@ export interface PromptOptions {
   action?: string
   /** A problem with `value` to show under the input, or null to accept it. */
   validate?: (value: string) => string | null
+}
+
+/** A key a panel answers to, and what it does there. */
+export interface PanelKey {
+  key: string
+  /** What it does, for the hint bar. */
+  action: string
+  priority?: Priority
+  run: () => void
+}
+
+/** The room a panel's content has, inside its frame. */
+export interface PanelSpace {
+  columns: number
+  rows: number
+}
+
+export interface PanelOptions {
+  title: string
+  /** Columns, borders included; never more than 90% of the screen. */
+  width?: number
+  /** Drawn on opening, and again on refresh, a resize or a change of palette. */
+  content: (space: PanelSpace) => string | StyledText
+  keys: readonly PanelKey[]
+  /** Runs once when the panel closes, however it closes. */
+  onClose?: () => void
+}
+
+/** An open panel. */
+export interface Panel {
+  /** Settles when the panel closes. */
+  readonly closed: Promise<void>
+  /** Draws the content again, after what it shows has changed. */
+  refresh(): void
 }
 
 const DEFAULT_WIDTH = 64
@@ -142,6 +176,39 @@ export class Modals {
         },
       }
     })
+  }
+
+  /**
+   * Shows content that changes while it is open, such as a secret revealed
+   * by a key, until Esc or q. Its content fits the room it is given, and
+   * draws nothing that does not fit.
+   */
+  panel({ title, width = DEFAULT_WIDTH, content, keys, onClose }: PanelOptions): Panel {
+    let refresh = () => {}
+    const closed = this.present<void>(undefined, finish => {
+      const frame = this.frame(title, width)
+      const text = new TextRenderable(this.renderer, { content: '', wrapMode: 'word', flexShrink: 1 })
+      const draw = () => { text.content = content({ columns: this.innerWidth(width), rows: this.innerHeight() }) }
+      refresh = () => { if (!text.isDestroyed) draw() }
+      this.themed(() => { text.fg = COLORS.text; draw() })
+      this.renderer.on('resize', refresh)
+      frame.add(text)
+      return {
+        frame,
+        hints: [
+          ...keys.map(({ key, action, priority = PRIORITY.high }) => ({ keys: key, action, priority })),
+          { keys: 'Esc', action: 'close', priority: PRIORITY.essential },
+        ],
+        dispose: () => { this.renderer.off('resize', refresh); onClose?.() },
+        onKey: key => {
+          key.preventDefault()
+          if (!plain(key)) return
+          if (key.name === 'escape' || key.name === 'q') finish()
+          else keys.find(choice => choice.key === key.name)?.run()
+        },
+      }
+    })
+    return { closed, refresh: () => refresh() }
   }
 
   /**

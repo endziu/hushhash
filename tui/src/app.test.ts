@@ -17,6 +17,7 @@ import { App } from './app'
 import { sidebarWidth } from './sidebar'
 import { PALETTES, setTheme, type ThemeSetting } from './theme'
 import { TuiState } from './state'
+import { HIDDEN_KEY } from './key-backup'
 
 type Setup = Awaited<ReturnType<typeof createTestRenderer>>
 
@@ -56,6 +57,10 @@ interface StartOptions {
   theme?: ThemeSetting
   /** Report a truecolor terminal, so avatars are drawn. */
   truecolor?: boolean
+  /** Report a terminal that supports hyperlinks. */
+  hyperlinks?: boolean
+  /** The identity file shown in the Key panel. */
+  identityPath?: string
   /** The identity to sign in as; default: a new one. */
   keypair?: Keypair
   /** A state file to load; default: state in memory. */
@@ -69,8 +74,9 @@ async function start(partner: Address | null | undefined = alice.identity.addres
   await identitySession.login()
   setup = await createTestRenderer({ width: options.width ?? 110, height })
   if (options.truecolor) setRendererCapabilities(setup.renderer, { rgb: true })
+  if (options.hyperlinks) setRendererCapabilities(setup.renderer, { hyperlinks: true })
   const state = options.statePath ? TuiState.load(options.statePath, keypair.address) : undefined
-  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, state })
+  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, state, identityPath: options.identityPath })
   void app.run()
   await until(() => frame().includes('● connected'), 'live connection')
 }
@@ -812,7 +818,118 @@ test('/remove closes the open conversation', async () => {
   await command('/remove')
   await until(() => frame().includes(' Remove conversation '), 'confirmation asked')
   await setup.mockInput.typeText('y')
-  await until(() => frame().includes('Share it, then start a conversation'), 'conversation closed')
+  await until(() => frame().includes('then start a conversation'), 'conversation closed')
   expect(listRow(shortAddress(alice.identity.address))).toBeUndefined()
   expect(hintLine()).toContain('Enter open')
+})
+
+/** The Share panel is open: its keys are in the hint bar. */
+function shareOpen(): boolean {
+  return hintLine().includes('l copy link')
+}
+
+/** Stands in for the terminal's clipboard; `supported: false` is a terminal without OSC 52. */
+function clipboard(supported = true): string[] {
+  const copied: string[] = []
+  spyOn(setup.renderer, 'copyToClipboardOSC52').mockImplementation(text => {
+    if (supported) copied.push(text)
+    return supported
+  })
+  return copied
+}
+
+test('/share shows a QR code, the address and the link, and copies them', async () => {
+  await start(null, 40)
+  const copied = clipboard()
+  const link = `${server.url.origin}/chat/${checksumAddress(identitySession.address)}`
+  await command('/share')
+  await until(() => shareOpen(), 'share open')
+  expect(frame()).toContain(checksumAddress(identitySession.address))
+  expect(frame()).toContain(link)
+  expect(frame()).toContain('█')
+  expect(hintLine()).toContain('c copy address')
+  expect(hintLine()).toContain('l copy link')
+
+  setup.mockInput.pressKey('c')
+  await until(() => frame().includes('Address copied'), 'address copied')
+  setup.mockInput.pressKey('l')
+  await until(() => frame().includes('Link copied'), 'link copied')
+  expect(copied).toEqual([checksumAddress(identitySession.address), link])
+
+  setup.mockInput.pressEscape()
+  await until(() => !shareOpen(), 'share closed')
+  // /address is the same panel, and so is s in the list.
+  await command('/address')
+  await until(() => shareOpen(), 'share from /address')
+  setup.mockInput.pressEscape()
+  await until(() => !shareOpen(), 'closed again')
+  setup.mockInput.pressTab()
+  setup.mockInput.pressKey('s')
+  await until(() => shareOpen(), 'share from s in the list')
+})
+
+test('Share says how large the terminal must be for the QR code, and when copying is not possible', async () => {
+  await start(null, 24)
+  clipboard(false)
+  await command('/share')
+  await until(() => shareOpen(), 'share open')
+  expect(frame()).not.toContain('█')
+  expect(frame()).toMatch(/Make the terminal at least \d+×\d+ to show the QR code/)
+  setup.mockInput.pressKey('c')
+  await until(() => frame().includes('This terminal cannot copy'), 'copy refused')
+})
+
+test('/key hides the key until v, and hides it again on closing or looking away', async () => {
+  const keypair = generateKeypair()
+  const secret = keypair.privateKey
+  const logged = (['log', 'info', 'warn', 'error', 'debug'] as const).map(method => spyOn(console, method))
+  await start(null, 32, undefined, { keypair, identityPath: '/home/someone/.config/hushhash/identity.json' })
+  const copied = clipboard()
+  await command('/key')
+  await until(() => frame().includes(' Your key '), 'key open')
+  expect(frame()).toContain(checksumAddress(keypair.address))
+  expect(frame()).toContain('/home/someone/.config/hushhash/identity.json')
+  expect(frame()).toContain('never import a key from a crypto wallet')
+  expect(frame()).toContain(HIDDEN_KEY)
+  expect(frame()).not.toContain(secret)
+
+  setup.mockInput.pressKey('v')
+  await until(() => frame().includes(secret), 'revealed')
+  setup.mockInput.pressKey('v')
+  await until(() => !frame().includes(secret), 'v hides it again')
+  setup.mockInput.pressKey('v')
+  await until(() => frame().includes(secret), 'revealed again')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Your key '), 'closed')
+  await command('/key')
+  await until(() => frame().includes(' Your key '), 'reopened')
+  expect(frame()).toContain(HIDDEN_KEY)
+  expect(frame()).not.toContain(secret)
+
+  setup.mockInput.pressKey('v')
+  await until(() => frame().includes(secret), 'revealed before looking away')
+  setup.renderer.emit('blur')
+  await until(() => !frame().includes(secret), 'hidden on blur')
+  expect(frame()).toContain(' Your key ')
+
+  setup.mockInput.pressKey('c')
+  await until(() => frame().includes('Private key copied'), 'copied')
+  expect(copied).toEqual([secret])
+  for (const spy of logged) {
+    expect(spy.mock.calls.flat().some(argument => String(argument).includes(secret.slice(2)))).toBe(false)
+    spy.mockRestore()
+  }
+})
+
+test('links in messages are underlined, and clickable where the terminal supports hyperlinks', async () => {
+  await start(undefined, 32, undefined, { hyperlinks: true })
+  await alice.send(identitySession.address, 'read https://example.com/page. thanks')
+  await until(() => frame().includes('https://example.com/page'), 'message shown')
+  const lines = frame().split('\n')
+  const y = lines.findIndex(line => line.includes('https://example.com/page'))
+  const x = lines[y]!.indexOf('https://example.com/page')
+  expect(setup.renderer.getLinkAt(x + 3, y)).toBe('https://example.com/page')
+  // The full stop after it is not part of it.
+  expect(setup.renderer.getLinkAt(x + 'https://example.com/page'.length, y)).toBeNull()
+  expect(setup.renderer.getLinkAt(x - 2, y)).toBeNull()
 })

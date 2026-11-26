@@ -25,6 +25,7 @@ export const LIST_HINTS: readonly Hint[] = [
   { keys: 'Tab', action: 'composer', priority: PRIORITY.high },
   { keys: 'r', action: 'name', priority: PRIORITY.normal },
   { keys: 'd', action: 'remove', priority: PRIORITY.low },
+  { keys: 's', action: 'share', priority: PRIORITY.low },
   { keys: 'PgUp/PgDn', action: 'scroll', priority: PRIORITY.low },
   { keys: 'Ctrl+B', action: 'hide list', priority: PRIORITY.lowest },
   { keys: '?', action: 'help', priority: PRIORITY.essential },
