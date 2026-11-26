@@ -1,6 +1,6 @@
 import {
   BoxRenderable, InputRenderable, InputRenderableEvents, ScrollBoxRenderable, StyledText, TextRenderable,
-  bg, bold, fg, t, type CliRenderer, type KeyEvent, type Renderable,
+  bg, bold, fg, t, type CliRenderer, type KeyEvent, type PasteEvent, type Renderable,
 } from '@opentui/core'
 import { PRIORITY, type Priority } from './bar'
 import type { Hint } from './hints'
@@ -31,6 +31,8 @@ export interface PromptOptions {
   action?: string
   /** A problem with `value` to show under the input, or null to accept it. */
   validate?: (value: string) => string | null
+  /** Draws • for each character typed or pasted, never the text itself. */
+  secret?: boolean
 }
 
 /** One line in a list to choose from. */
@@ -49,7 +51,7 @@ export interface ChooseOptions<T> {
   /** Columns, borders included; never more than 90% of the screen. */
   width?: number
   /** A line above the list. */
-  label?: string
+  label?: string | StyledText
   /** Shows a line to type a filter into, with this placeholder. */
   filter?: string
   /** The items for what is typed in the filter; '' without one. */
@@ -58,6 +60,8 @@ export interface ChooseOptions<T> {
   initial?: number
   /** What Enter does, for the hint bar, such as "open". */
   action: string
+  /** What Esc does, for the hint bar; default: cancel. */
+  cancel?: string
   /** Shown when there are no items. */
   empty?: string
 }
@@ -108,6 +112,8 @@ interface ModalParts {
   /** Its keys, for the hint bar. */
   hints: readonly Hint[]
   onKey: (key: KeyEvent) => void
+  /** Hears a paste, for a modal that has nothing focused to take it. */
+  onPaste?: (text: string) => void
   /** Gets focus while the modal is open; nothing does if absent. */
   focus?: Renderable
   /** Undoes anything set up outside the frame. */
@@ -174,6 +180,14 @@ export class Modals {
     if (!this.current) return false
     this.current.onKey(key)
     return true
+  }
+
+  /** Gives a paste to the open modal, if it takes one itself. */
+  handlePaste(event: PasteEvent): void {
+    const onPaste = this.current?.onPaste
+    if (!onPaste) return
+    event.preventDefault()
+    onPaste(new TextDecoder().decode(event.bytes))
   }
 
   /** Cancels the open modal, if any. */
@@ -246,7 +260,7 @@ export class Modals {
    * Lists items to pick one from; its value, or null if cancelled. With a
    * filter, what is typed chooses the items. ↑↓ move, Enter or a click picks.
    */
-  choose<T>({ title, width = DEFAULT_WIDTH, label, filter, items, initial = 0, action, empty = 'Nothing to choose' }: ChooseOptions<T>): Promise<T | null> {
+  choose<T>({ title, width = DEFAULT_WIDTH, label, filter, items, initial = 0, action, cancel = 'cancel', empty = 'Nothing to choose' }: ChooseOptions<T>): Promise<T | null> {
     return this.present<T | null>(null, finish => {
       const frame = this.frame(title, width)
       if (label) frame.add(this.text(label, { marginBottom: 1 }))
@@ -300,7 +314,7 @@ export class Modals {
         hints: [
           { keys: '↑↓', action: 'move', priority: PRIORITY.high },
           { keys: 'Enter', action, priority: PRIORITY.essential },
-          { keys: 'Esc', action: 'cancel', priority: PRIORITY.essential },
+          { keys: 'Esc', action: cancel, priority: PRIORITY.essential },
         ],
         focus: input ?? undefined,
         dispose: () => this.renderer.off('resize', draw),
@@ -365,7 +379,9 @@ export class Modals {
   }
 
   /** Asks for one line of text; null if cancelled. */
-  prompt({ title, label, value = '', placeholder, action = 'save', validate }: PromptOptions): Promise<string | null> {
+  prompt(options: PromptOptions): Promise<string | null> {
+    if (options.secret) return this.secretPrompt(options)
+    const { title, label, value = '', placeholder, action = 'save', validate } = options
     return this.present<string | null>(null, finish => {
       const frame = this.frame(title)
       if (label) frame.add(this.text(label, { marginBottom: 1 }))
@@ -395,6 +411,59 @@ export class Modals {
           key.preventDefault()
           finish(null)
         },
+      }
+    })
+  }
+
+  /**
+   * A prompt that never draws what is typed, such as a private key. It has
+   * no input to focus, so it takes keys and pastes itself: Backspace rubs
+   * out, Ctrl+U clears.
+   */
+  private secretPrompt({ title, label, value: initial = '', placeholder = '', action = 'save', validate }: PromptOptions): Promise<string | null> {
+    return this.present<string | null>(null, finish => {
+      const frame = this.frame(title)
+      if (label) frame.add(this.text(label, { marginBottom: 1 }))
+      let value = initial
+      const field = new TextRenderable(this.renderer, { content: '', height: 1, flexShrink: 0, width: '100%', truncate: true })
+      const problem = new TextRenderable(this.renderer, { content: '', wrapMode: 'word', flexShrink: 0 })
+      const draw = () => {
+        const count = [...value].length
+        field.content = count
+          ? t`${fg(COLORS.text)('•'.repeat(Math.min(count, 40)))}${fg(COLORS.muted)(`  ${count} characters`)}`
+          : t`${fg(COLORS.muted)(placeholder)}`
+      }
+      const change = (next: string) => {
+        value = next
+        problem.content = ''
+        draw()
+      }
+      this.themed(() => {
+        field.bg = COLORS.selection
+        problem.fg = COLORS.error
+        draw()
+      })
+      frame.add(field)
+      frame.add(problem)
+      return {
+        frame,
+        hints: [
+          { keys: 'Enter', action, priority: PRIORITY.essential },
+          { keys: 'Ctrl+U', action: 'clear', priority: PRIORITY.normal },
+          { keys: 'Esc', action: 'cancel', priority: PRIORITY.essential },
+        ],
+        onKey: key => {
+          key.preventDefault()
+          if (key.name === 'escape') finish(null)
+          else if (key.name === 'return') {
+            const invalid = validate?.(value) ?? null
+            if (invalid) problem.content = invalid
+            else finish(value)
+          } else if (key.name === 'backspace') change([...value].slice(0, -1).join(''))
+          else if (key.ctrl && key.name === 'u') change('')
+          else if (plain(key) && [...key.sequence].length === 1 && !/\p{Cc}/u.test(key.sequence)) change(value + key.sequence)
+        },
+        onPaste: text => change(value + text.replace(/\p{Cc}/gu, '')),
       }
     })
   }

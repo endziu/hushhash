@@ -1,4 +1,4 @@
-import type { CliRenderer, KeyEvent, ThemeMode } from '@opentui/core'
+import type { CliRenderer, KeyEvent, PasteEvent, ThemeMode } from '@opentui/core'
 import { checksumAddress, parseAddress, shortAddress, type Address } from '../../src/shared/address'
 import type { LiveEvent } from '../../src/shared/live-events'
 import { ConversationSession } from '../../src/client/lib/conversation-session'
@@ -30,6 +30,7 @@ import { MESSAGE_LIFETIMES } from '../../src/client/lib/message-lifetime'
 import { completeCommands, completedText, type Completion } from './command-list'
 import { filterConversations, matchConversations } from './switcher'
 import { lifetimeLabel, lifetimeNotice } from './lifetime'
+import { Notifier, terminalTitle, totalUnread } from './notify'
 
 // How many of a conversation's newest messages are fetched to count its unread ones.
 const UNREAD_PAGE = 20
@@ -46,7 +47,12 @@ export interface AppOptions {
   state?: TuiState
   /** Where the identity file is, for the Key panel. */
   identityPath?: string
+  /** Rings the terminal's bell, where it has no desktop notifications; default: writes BEL to stdout. */
+  bell?: () => void
 }
+
+// OpenTUI has no bell. A lone BEL between its writes rings and draws nothing.
+const ringBell = () => { process.stdout.write('\x07') }
 
 /**
  * The whole terminal client: a conversation list, the selected conversation
@@ -89,6 +95,9 @@ export class App {
   private session: ConversationSession | null = null
   private partner: Address | null = null
   private readonly outbox: Outbox
+  private readonly notifier: Notifier
+  /** The terminal title set last; null before one is. */
+  private title: string | null = null
   private readonly newMessages = new NewMessages()
   private themeSetting: ThemeSetting
   private terminalTheme: ThemeMode | null
@@ -117,6 +126,10 @@ export class App {
     this.terminalTheme = renderer.themeMode
     setTheme(resolveTheme(this.themeSetting, this.terminalTheme))
     this.outbox = new Outbox(identity.address)
+    this.notifier = new Notifier({
+      notify: (title, message) => renderer.triggerNotification(message, title),
+      bell: options.bell ?? ringBell,
+    })
     this.attention = new TerminalAttention(attentive => this.attentionChanged(attentive), options.idleMs ?? IDLE_MS)
     // Like a browser window's focus: only an attentive terminal suppresses push.
     identity.setAttention(this.attention.attentive)
@@ -149,6 +162,8 @@ export class App {
       pickLifetime: () => void this.pickLifetime(),
       theme: () => this.themeSetting,
       setTheme: setting => this.setThemeSetting(setting),
+      notifications: () => this.state.notifications(),
+      setNotifications: on => this.state.setNotifications(on),
       partner: () => this.partner,
       open: address => this.open(address),
       rename: (address, name) => this.rename(address, name),
@@ -223,7 +238,10 @@ export class App {
 
   private readonly onFocus = () => this.attention.focus()
   private readonly onBlur = () => this.attention.blur()
-  private readonly onPaste = () => this.attention.input()
+  private readonly onPaste = (event: PasteEvent) => {
+    this.attention.input()
+    this.modals.handlePaste(event)
+  }
   private readonly onResize = () => {
     this.layout.fitToTerminal()
     this.composer.fit()
@@ -545,6 +563,8 @@ export class App {
     if (looking) this.newMessages.arrivedWhileLooking(id)
     // Opened as it arrives; the next count says if it was not.
     else if (sender !== this.identity.address) this.unread.arrived(partner, id, created_at)
+    // Away, the desktop hears of it; at the screen, you see it.
+    if (sender !== this.identity.address && !this.attention.attentive && this.state.notifications()) this.notifier.arrived()
     this.scheduleConversationRefresh()
     this.renderList()
   }
@@ -758,6 +778,20 @@ export class App {
     this.listed = rows.map(row => row.address)
     this.sidebar.showFilter(this.listFilter, rows.length)
     this.sidebar.render(rows, this.partner)
+    this.renderTitle()
+  }
+
+  /** The terminal title: everything unread, whatever the filter. OpenTUI clears it on exit. */
+  private renderTitle(): void {
+    const total = totalUnread(this.conversations.map(({ address }) => this.unread.count(address, this.state.unreadAfter(address))))
+    const title = terminalTitle(total)
+    if (title === this.title) return
+    try {
+      this.renderer.setTerminalTitle(title)
+      this.title = title
+    } catch {
+      // A terminal not set up yet, such as a test's, takes none; the next change tries again.
+    }
   }
 
   private renderMessages(): void {

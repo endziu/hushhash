@@ -8,6 +8,9 @@ import type { MessageStamp } from './unread'
 
 const MAX_BACKOFF_MS = 30_000
 
+/** The CLI's ClientUpdateRequiredError advice, for this package's two installs. */
+export const OUTDATED = 'This hushhash TUI is out of date for this server. Run git pull, then bun install in the repository and in tui/.'
+
 /** One open live stream; only equality has meaning. */
 export type ConnectionEpoch = NonNullable<SessionOptions['connection']>
 

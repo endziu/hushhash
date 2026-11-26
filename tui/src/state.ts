@@ -21,6 +21,8 @@ export interface ConversationState {
 
 interface IdentityState {
   conversations: Record<Address, ConversationState>
+  /** False when desktop notifications are off; absent means on. */
+  notify?: false
 }
 
 interface StateDocument {
@@ -59,13 +61,14 @@ function parseDocument(value: unknown): StateDocument {
       if (isCanonicalAddress(address) && state) parsed[address] = state
     }
     document.identities[self] = { conversations: parsed }
+    if ((identity as { notify?: unknown }).notify === false) document.identities[self].notify = false
   }
   return document
 }
 
 /**
  * The TUI's local memory of conversations: names, how far you have read, and
- * which you removed from the list. One file holds every identity's state,
+ * which you removed from the list; and whether to notify the desktop. One file holds every identity's state,
  * keyed by its address so they never mix. Names are private, so the file is
  * written atomically and readable only by you, and never leaves the machine.
  * A missing or corrupt file starts empty. Without a path nothing is saved.
@@ -159,6 +162,17 @@ export class TuiState {
   isRemoved(address: Address, lastMessageAt: number): boolean {
     const removedAt = this.conversation(address)?.removedAt
     return removedAt !== undefined && lastMessageAt <= removedAt
+  }
+
+  /** Whether a message that arrives while you are away notifies the desktop. On unless turned off. */
+  notifications(): boolean {
+    return this.mine.notify !== false
+  }
+
+  setNotifications(on: boolean): void {
+    if (on) delete this.mine.notify
+    else this.mine.notify = false
+    this.save()
   }
 
   private update(address: Address, change: (state: ConversationState) => void): void {

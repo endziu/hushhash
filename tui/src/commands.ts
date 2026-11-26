@@ -42,6 +42,9 @@ export interface CommandHost {
   pickLifetime(): void
   theme(): ThemeSetting
   setTheme(setting: ThemeSetting): void
+  /** Whether a message that arrives while you are away notifies the desktop. */
+  notifications(): boolean
+  setNotifications(on: boolean): void
   /** The open conversation's partner, or null. */
   partner(): Address | null
   open(address: Address): void
@@ -106,6 +109,14 @@ export class Commands {
         if (!setting) { host.toast(`Choose a theme: ${choices}`, 'error'); return true }
         host.setTheme(setting)
         host.toast(setting === 'system' ? 'Theme follows the terminal' : `Theme ${setting}`, 'success')
+        return true
+      }
+      case '/notify': {
+        const choice = arg.toLowerCase()
+        if (!arg) { host.toast(`Notifications ${host.notifications() ? 'on' : 'off'}. Choose: on, off`); return true }
+        if (choice !== 'on' && choice !== 'off') { host.toast('Choose: /notify on or /notify off', 'error'); return true }
+        host.setNotifications(choice === 'on')
+        host.toast(choice === 'on' ? 'Notifications on: a message that arrives while you are away tells the desktop' : 'Notifications off', 'success')
         return true
       }
       case '/clear':

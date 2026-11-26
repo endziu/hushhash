@@ -15,6 +15,7 @@ export const COMMANDS: readonly CommandInfo[] = [
   { name: 'remove', description: 'take this conversation off the list here (asks first)' },
   { name: 'ttl', usage: '[5m|300]', description: 'lifetime of new messages; alone, a list to pick from' },
   { name: 'theme', usage: '[system|light|dark]', description: 'colours; system follows the terminal' },
+  { name: 'notify', usage: '[on|off]', description: 'tell the desktop when a message arrives while you are away' },
   { name: 'clear', description: 'delete all messages for both of you (asks first)' },
   { name: 'retry', description: 'retry loading or opening' },
   { name: 'older', description: 'load older messages' },

@@ -23,6 +23,7 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
   const state = {
     ttl: 1800,
     theme: 'system' as ThemeSetting,
+    notify: true,
     toasts: [] as { text: string; kind: ToastKind }[],
     modals: [] as ModalOptions[],
     confirmAnswer: true,
@@ -43,6 +44,8 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     pickLifetime: () => { state.picks++ },
     theme: () => state.theme,
     setTheme: setting => { state.theme = setting },
+    notifications: () => state.notify,
+    setNotifications: on => { state.notify = on },
     partner: () => state.partner,
     open: address => { state.opened.push(address); state.partner = address },
     rename: (address, name) => { state.names.push([address, name]) },
@@ -93,6 +96,21 @@ test('/theme shows, validates and sets the theme', () => {
   commands.run('/theme light')
   expect(state.theme).toBe('light')
   expect(state.toasts.at(-1)).toEqual({ text: 'Theme light', kind: 'success' })
+})
+
+test('/notify shows, validates and sets desktop notifications', () => {
+  const { host, state } = fakeHost()
+  const commands = new Commands(host)
+  commands.run('/notify')
+  expect(state.toasts.at(-1)).toEqual({ text: 'Notifications on. Choose: on, off', kind: 'info' })
+  commands.run('/notify maybe')
+  expect(state.toasts.at(-1)?.kind).toBe('error')
+  expect(state.notify).toBe(true)
+  commands.run('/notify OFF')
+  expect(state.notify).toBe(false)
+  expect(state.toasts.at(-1)).toEqual({ text: 'Notifications off', kind: 'success' })
+  commands.run('/notify on')
+  expect(state.notify).toBe(true)
 })
 
 test('an unknown command reports false so its text can be kept', () => {
