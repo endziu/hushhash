@@ -933,3 +933,185 @@ test('links in messages are underlined, and clickable where the terminal support
   expect(setup.renderer.getLinkAt(x + 'https://example.com/page'.length, y)).toBeNull()
   expect(setup.renderer.getLinkAt(x - 2, y)).toBeNull()
 })
+
+/** Opens conversations with new addresses, named `names`, and returns their addresses. */
+async function openNamed(...names: string[]): Promise<Address[]> {
+  const addresses: Address[] = []
+  for (const name of names) {
+    const address = generateKeypair().address
+    await command(`/open ${address} ${name}`)
+    await until(() => listRow(name) !== undefined, `${name} listed`)
+    addresses.push(address)
+  }
+  return addresses
+}
+
+test('Ctrl+K finds a conversation by name and opens it', async () => {
+  await start()
+  const [bob, carol] = await openNamed('Bob', 'Carol')
+  setup.mockInput.pressKey('k', { ctrl: true })
+  await until(() => frame().includes(' Switch conversation '), 'switcher')
+  expect(hintLine()).toContain('Enter open')
+  // Carol is open, so marked.
+  expect(frame()).toContain(`● Carol  ${shortAddress(carol!)}`)
+  expect(frame()).toContain(`  Bob  ${shortAddress(bob!)}`)
+  expect(frame()).toContain(checksumAddress(alice.identity.address))
+  await setup.mockInput.typeText('bo')
+  await until(() => !frame().includes(`● Carol  ${shortAddress(carol!)}`), 'filtered')
+  expect(frame()).not.toContain(checksumAddress(alice.identity.address))
+  setup.mockInput.pressEnter()
+  await until(() => !frame().includes(' Switch conversation '), 'switcher closed')
+  await until(() => paneTitle().includes('Bob'), 'Bob opened')
+  // Typing goes to the composer again.
+  await setup.mockInput.typeText('hi')
+  await until(() => frame().includes('hi'), 'composer has focus')
+})
+
+test('the switcher offers a new conversation for a whole address not listed, and Esc cancels', async () => {
+  await start(null)
+  const stranger = generateKeypair().address
+  setup.mockInput.pressKey('k', { ctrl: true })
+  await until(() => frame().includes(' Switch conversation '), 'switcher')
+  await setup.mockInput.typeText(stranger.slice(0, 10))
+  await until(() => frame().includes('No conversation matches'), 'nothing matches part of an address')
+  await setup.mockInput.typeText(stranger.slice(10))
+  await until(() => frame().includes(`Start a conversation with ${checksumAddress(stranger)}`), 'new conversation offered')
+  setup.mockInput.pressEnter()
+  await until(() => paneTitle().includes(checksumAddress(stranger)), 'opened')
+
+  setup.mockInput.pressKey('k', { ctrl: true })
+  await until(() => frame().includes(' Switch conversation '), 'switcher again')
+  // Listed now, so it is found rather than offered.
+  await setup.mockInput.typeText(stranger)
+  await until(() => frame().includes(`● ${checksumAddress(stranger)}`), 'listed, marked open')
+  expect(frame()).not.toContain('Start a conversation with')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Switch conversation '), 'cancelled')
+})
+
+test('/ in the list filters it in place; Esc clears the filter', async () => {
+  await start()
+  await openNamed('Bob', 'Carol')
+  setup.mockInput.pressTab()
+  await until(() => hintLine().includes('/ filter'), 'list hints')
+  await setup.mockInput.typeText('/car')
+  await until(() => listRow('Carol') !== undefined && listRow('Bob') === undefined, 'filtered')
+  expect(listRow(shortAddress(alice.identity.address))).toBeUndefined()
+  expect(frame()).toContain('/ car')
+  expect(hintLine()).toContain('Esc clear filter')
+  // Keys that act on the list type into the filter instead.
+  await setup.mockInput.typeText('rd')
+  await until(() => frame().includes('no match'), 'nothing matches')
+  expect(frame()).not.toContain(' Name conversation ')
+  setup.mockInput.pressEscape()
+  await until(() => listRow('Bob') !== undefined && listRow('Carol') !== undefined, 'filter cleared')
+  expect(frame()).not.toContain('/ card')
+
+  // Enter opens the match, and leaving the list ends the filter.
+  await setup.mockInput.typeText('/bo')
+  await until(() => listRow('Carol') === undefined, 'filtered again')
+  setup.mockInput.pressEnter()
+  await until(() => paneTitle().includes('Bob'), 'Bob opened')
+  await until(() => listRow('Carol') !== undefined, 'list whole again')
+})
+
+test('Alt+1…9 opens that conversation in the list', async () => {
+  await start()
+  await openNamed('Bob', 'Carol')
+  // Carol was opened last, so she is first.
+  setup.mockInput.pressKey('2', { meta: true })
+  await until(() => paneTitle().includes('Bob'), 'second opened')
+  setup.mockInput.pressKey('1', { meta: true })
+  await until(() => paneTitle().includes('Carol'), 'first opened')
+  setup.mockInput.pressKey('9', { meta: true })
+  await setup.renderOnce()
+  expect(paneTitle()).toContain('Carol')
+})
+
+/** The command list above the composer, if it is on screen. */
+function commandList(): string | undefined {
+  return frame().split('\n').find(line => line.includes(' Commands '))
+}
+
+test('/ in the composer lists commands; typing narrows them, Tab completes and Enter runs', async () => {
+  await start()
+  await setup.mockInput.typeText('/')
+  await until(() => commandList() !== undefined, 'command list')
+  expect(frame()).toContain('/open')
+  // Eight at a time; ↑ from the first goes round to the last.
+  expect(frame()).not.toContain('/quit')
+  setup.mockInput.pressArrow('up')
+  await until(() => frame().includes('/quit'), 'scrolled to the last')
+  expect(hintLine()).toContain('Tab complete')
+  await setup.mockInput.typeText('th')
+  await until(() => !frame().includes('/open'), 'narrowed')
+  expect(frame()).toContain('/theme')
+  setup.mockInput.pressTab()
+  await until(() => commandList() === undefined, 'completed with a space for the argument')
+  await setup.mockInput.typeText('light')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('Theme light'), 'ran /theme light')
+
+  // Enter runs a command that needs nothing more.
+  await setup.mockInput.typeText('/hel')
+  await until(() => frame().includes('/help'), 'help listed')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes(' Help '), 'help shown')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Help '), 'help closed')
+
+  // ↓ chooses, and Enter fills in one that needs more.
+  await setup.mockInput.typeText('/o')
+  await until(() => frame().includes('/older'), 'open and older listed')
+  setup.mockInput.pressArrow('down')
+  setup.mockInput.pressArrow('up')
+  setup.mockInput.pressEnter()
+  await until(() => commandList() === undefined, 'filled in')
+  await setup.mockInput.typeText(`${generateKeypair().address} Dave`)
+  setup.mockInput.pressEnter()
+  await until(() => paneTitle().includes('Dave'), 'ran /open')
+})
+
+test('Esc dismisses the command list; //text and pasted lines get none', async () => {
+  await start()
+  await setup.mockInput.typeText('/cl')
+  await until(() => commandList() !== undefined, 'command list')
+  setup.mockInput.pressEscape()
+  await until(() => commandList() === undefined, 'dismissed')
+  // Esc stayed in the composer, and the list stays away while typing the command.
+  expect(hintLine()).toContain('Enter send')
+  await setup.mockInput.typeText('e')
+  await setup.renderOnce()
+  expect(commandList()).toBeUndefined()
+  setup.mockInput.pressKey('u', { ctrl: true })
+  await setup.mockInput.typeText('/')
+  await until(() => commandList() !== undefined, 'back once the composer is cleared')
+  await setup.mockInput.typeText('/sh')
+  await setup.renderOnce()
+  expect(commandList()).toBeUndefined()
+  setup.mockInput.pressKey('u', { ctrl: true })
+  await setup.mockInput.pasteBracketedText('/usr/local/bin\nis on my PATH')
+  await setup.renderOnce()
+  expect(commandList()).toBeUndefined()
+})
+
+test('/ttl and Ctrl+T list the lifetimes; the one picked shows on the composer', async () => {
+  await start()
+  await until(() => frame().includes('Message · disappears 30m after it is opened'), 'composer title')
+  await command('/ttl')
+  await until(() => frame().includes(' Message lifetime '), 'picker')
+  expect(frame()).toContain('● 30m  in use')
+  setup.mockInput.pressArrow('down')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('disappears 1h after it is opened'), 'picked the next one')
+  expect(statusLine()).toContain('lifetime 1h')
+
+  setup.mockInput.pressKey('t', { ctrl: true })
+  await until(() => frame().includes('● 1h  in use'), 'picker from Ctrl+T, marking the new one')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Message lifetime '), 'cancelled')
+  expect(statusLine()).toContain('lifetime 1h')
+  await setup.mockInput.typeText('short lived')
+  setup.mockInput.pressEnter()
+  await until(async () => (await sentByTui()).some(message => message.ttl === 3600), 'sent with the picked lifetime')
+})

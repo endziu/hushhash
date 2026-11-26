@@ -25,7 +25,8 @@ where the terminal reports that.
 
 The top line shows the live connection (`● connected`, `◐ reconnecting in 4s` with a countdown to
 the next attempt, or `○ offline` after three failed attempts in a row, with the reason when it
-fits), the server (`prod`, `local` or its host), the lifetime of new messages, `away` while you
+fits), the server (`prod`, `local` or its host), the lifetime of new messages (also on the
+composer's border), `away` while you
 are away (see [Attention](#attention)) and your avatar and address in short form; `/share`
 shows it in full. The bottom line shows the keys that work where you are: the composer, the conversation list
 or an open dialog. A narrow terminal drops the less important parts of both lines first.
@@ -34,11 +35,15 @@ or an open dialog. A narrow terminal drops the less important parts of both line
 |---|---|
 | Enter | Send |
 | Shift+Enter, Alt+Enter, Ctrl+J | New line (Shift+Enter needs a terminal that reports it) |
-| Tab | Switch between the conversation list and the composer |
-| Esc | Go to the conversation list; in a dialog, close it |
+| Tab | Switch between the conversation list and the composer; complete a command |
+| Esc | Go to the conversation list; in a dialog, close it; close the command list |
+| Ctrl+K | Switch conversation by name or address |
+| Alt+1…9 | Open the first to ninth conversation in the list |
+| Ctrl+T | Choose the lifetime of new messages |
 | Ctrl+B | Hide or show the conversation list; in a narrow terminal, switch screens |
 | F1, or ? in the list | Help |
 | Enter in the list | Open that conversation |
+| / in the list | Filter the list; Esc clears it |
 | r in the list | Name that conversation |
 | d in the list | Remove that conversation from the list (asks first) |
 | s in the list | Share your address: a QR code and your conversation link |
@@ -46,13 +51,18 @@ or an open dialog. A narrow terminal drops the less important parts of both line
 | PageUp / PageDown | Scroll; PageUp at the top loads older messages |
 | Ctrl+C | Quit |
 
-Commands typed in the composer: `/open ADDRESS [NAME]` (or `/new`), `/name [NAME]`, `/remove`, `/ttl [5m|300]`, `/theme [system|light|dark]`, `/clear` (asks in a
+Typing `/` in the composer lists the commands above it with what each does, narrowing as you
+type. ↑↓ choose one, Tab completes it and Enter runs it; a command that needs more, such as
+`/open`, is filled in for you to finish, unless you typed it in full. Esc hides the list until you
+type something else. Arguments, `//text` and multi-line text get no list.
+
+Commands typed in the composer: `/open ADDRESS [NAME]` (or `/new`), `/name [NAME]`, `/remove`, `/ttl [5m|300]` (alone, a list to pick from), `/theme [system|light|dark]`, `/clear` (asks in a
 dialog first), `/retry`, `/older`, `/share` (or `/address`), `/key`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
 single line; multi-line text that starts with `/` is sent as a message. Start a one-line message
 with `//` to send text that begins with `/`; multi-line text is sent as typed. A mistyped command
 stays in the composer.
 
-Help, `/share`, `/key` and `/clear` open a dialog over the screen. While it is open it takes every key;
+Help, `/share`, `/key`, `/ttl`, Ctrl+K and `/clear` open a dialog over the screen. While it is open it takes every key;
 Esc or a click outside closes it. `/clear` starts on Cancel, so Enter alone does not delete
 anything: choose Delete with →, or press y.
 
@@ -83,6 +93,19 @@ Under `system`, open dialogs and toasts change colour with the terminal too.
 Below 70 columns, or after Ctrl+B, the list is a screen of its own: Tab or Esc switches between it
 and the conversation, whose header says `← conversations`. Otherwise the sidebar widens with the
 terminal, from 24 to 36 columns. The composer grows with its text up to eight lines.
+
+## Finding a conversation
+
+Ctrl+K opens the quick switcher. Type part of a name or an address, ignoring case: a name matches
+from its start, from a word's start, anywhere, or by its letters in order (`bbr` finds Bob
+Builder); an address from its start, with or without `0x`, or anywhere without it, such as its last
+characters. The best matches come first and the open conversation is marked `●`. ↑↓ choose, Enter
+or a click opens. A whole address that is not listed offers "Start a conversation with 0x…".
+
+`/` in the list filters it in place by the same rules, keeping its order. Keys that act on the list,
+such as r and d, type into the filter instead; ↑↓ and Enter still move and open. Esc, rubbing out
+the filter, or leaving the list clears it. Alt+1 to Alt+9 open the conversation in that place in
+the list, as it is shown.
 
 ## Names, unread and removed conversations
 

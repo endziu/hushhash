@@ -1,5 +1,6 @@
 import {
-  BoxRenderable, RGBA, SelectRenderable, SelectRenderableEvents, TextAttributes, type CliRenderer, type OptimizedBuffer,
+  BoxRenderable, RGBA, SelectRenderable, SelectRenderableEvents, TextAttributes, TextRenderable, fg, t,
+  type CliRenderer, type OptimizedBuffer,
 } from '@opentui/core'
 import { parseAddress, shortAddress, type Address } from '../../src/shared/address'
 import { fmtDay, fmtTime } from '../../src/client/lib/display'
@@ -133,12 +134,18 @@ class ConversationSelect extends SelectRenderable {
 export class Sidebar {
   readonly view: BoxRenderable
   private readonly list: ConversationSelect
+  private readonly filterLine: TextRenderable
   private readonly paintFrame: () => void
+  /** The filter on screen, to draw it again in a new palette. */
+  private filter: { query: string; matches: number } | null = null
 
   constructor(private readonly renderer: CliRenderer, onOpen: (address: Address) => void) {
     this.view = new BoxRenderable(renderer, {
       width: sidebarWidth(renderer.width), flexShrink: 0, border: true, borderStyle: 'rounded', title: ' Conversations ',
+      flexDirection: 'column',
     })
+    this.filterLine = new TextRenderable(renderer, { content: '', height: 1, flexShrink: 0, paddingX: 1, visible: false })
+    this.view.add(this.filterLine)
     const list = this.list = new ConversationSelect(renderer, {
       flexGrow: 1, options: [], wrapSelection: false, showScrollIndicator: true, showSelectionIndicator: false,
       backgroundColor: 'transparent', focusedBackgroundColor: 'transparent',
@@ -174,7 +181,24 @@ export class Sidebar {
     list.selectedTextColor = COLORS.accent
     this.view.titleColor = COLORS.text
     this.paintFrame()
+    this.showFilter(this.filter?.query ?? null, this.filter?.matches ?? 0)
     list.requestRender()
+  }
+
+  /** Shows what the list is filtered by, and whether anything matches; null hides it. */
+  showFilter(query: string | null, matches: number): void {
+    this.filter = query === null ? null : { query, matches }
+    this.filterLine.visible = query !== null
+    if (query === null) return
+    const typed = terminalText(query)
+    this.filterLine.content = matches || !query
+      ? t`${fg(COLORS.accent)('/')} ${fg(COLORS.text)(typed)}${fg(COLORS.accent)('▏')}`
+      : t`${fg(COLORS.accent)('/')} ${fg(COLORS.text)(typed)}${fg(COLORS.accent)('▏')} ${fg(COLORS.muted)('no match')}`
+  }
+
+  /** Highlights the first conversation, for a filter just changed. */
+  highlightFirst(): void {
+    if (this.list.options.length) this.list.setSelectedIndex(0)
   }
 
   set width(columns: number | '100%') {

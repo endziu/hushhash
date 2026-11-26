@@ -6,6 +6,7 @@ import { terminalText } from '../../src/cli/terminal-text'
 import { AVATAR_COLUMNS, avatarGrid, avatarRows, canDrawAvatars } from './avatar'
 import { HELP } from './help'
 import { messageText } from './links'
+import { joinLines } from './styled'
 import { layoutRows, messageMeta, type ExpiryTone, type MessageState, type RowLayout, type ShownMessage } from './message-view'
 import { COLORS, themeName } from './theme'
 
@@ -217,8 +218,4 @@ function noticeLines(snapshot: SessionSnapshot, attentive: boolean): StyledText[
   else if (snapshot.hasMore) lines.push(t`${dim('PageUp at the top loads older messages')}`)
   if (!attentive) lines.push(t`${dim('Away: new messages are opened when you come back or press a key')}`)
   return lines
-}
-
-export function joinLines(lines: StyledText[]): StyledText {
-  return new StyledText(lines.flatMap((line, index) => index === 0 ? line.chunks : [...t`${'\n'}`.chunks, ...line.chunks]))
 }

@@ -106,6 +106,8 @@ export const QR_COLORS = { dark: '#000000', light: '#ffffff' } as const
 
 /** Stacking order of what is drawn above the layout. */
 export const LAYERS = {
+  /** The command list above the composer. */
+  popup: 50,
   modal: 100,
   /** The hint bar, above a dialog's backdrop since it shows the dialog's keys. */
   hints: 150,

@@ -1,5 +1,5 @@
 import type { CliRenderer, KeyEvent, ThemeMode } from '@opentui/core'
-import { checksumAddress, type Address } from '../../src/shared/address'
+import { checksumAddress, parseAddress, shortAddress, type Address } from '../../src/shared/address'
 import type { LiveEvent } from '../../src/shared/live-events'
 import { ConversationSession } from '../../src/client/lib/conversation-session'
 import { errorMessage } from '../../src/client/lib/errors'
@@ -11,10 +11,10 @@ import { Commands, classifyInput } from './commands'
 import { HELP_MODAL } from './help'
 import { Composer } from './composer'
 import { Layout } from './layout'
-import { Sidebar, type ConversationEntry } from './sidebar'
-import { COMPOSER_HINTS, HintBar, LIST_HINTS, UNFOCUSED_HINTS } from './hints'
+import { Sidebar, type ConversationEntry, type ListRow } from './sidebar'
+import { COMPLETION_HINTS, COMPOSER_HINTS, FILTER_HINTS, HintBar, LIST_HINTS, UNFOCUSED_HINTS } from './hints'
 import { StatusBar } from './status-bar'
-import { Modals } from './modals'
+import { Modals, type ChoiceItem } from './modals'
 import { Toasts, type ToastKind } from './toasts'
 import { Transcript } from './transcript'
 import { NewMessages, newestAccepted } from './message-view'
@@ -26,6 +26,10 @@ import { shareContent } from './share'
 import { keyContent } from './key-backup'
 import { avatarGrid, avatarRows, canDrawAvatars } from './avatar'
 import { conversationUrl } from '../../src/client/lib/address-links'
+import { MESSAGE_LIFETIMES } from '../../src/client/lib/message-lifetime'
+import { completeCommands, completedText, type Completion } from './command-list'
+import { filterConversations, matchConversations } from './switcher'
+import { lifetimeLabel, lifetimeNotice } from './lifetime'
 
 // How many of a conversation's newest messages are fetched to count its unread ones.
 const UNREAD_PAGE = 20
@@ -63,6 +67,17 @@ export class App {
   private readonly layout: Layout
 
   private conversations: ConversationEntry[] = []
+  /** The conversations the list shows, in its order, for Alt+1…9. */
+  private listed: Address[] = []
+  /** What the list is filtered by; null when it is not. */
+  private listFilter: string | null = null
+  /** The commands listed above the composer, and the one chosen. */
+  private completions: Completion[] = []
+  private completionIndex = 0
+  /** The text the command list was made for. */
+  private completionsFor = ''
+  /** What the composer held when Esc hid the command list; it stays hidden while that is typed on. */
+  private completionDismissed: string | null = null
   private readonly state: TuiState
   private readonly unread = new UnreadCounts()
   /** Conversations whose unread count is being fetched. */
@@ -108,7 +123,7 @@ export class App {
 
     this.sidebar = new Sidebar(renderer, address => this.open(address))
     this.transcript = new Transcript(renderer, identity.address)
-    this.composer = new Composer(renderer, () => this.submit())
+    this.composer = new Composer(renderer, () => this.submit(), () => this.composerChanged())
     this.statusBar = new StatusBar(renderer, identity.address, options.server)
     this.hintBar = new HintBar(renderer)
     this.layout = new Layout(renderer, {
@@ -119,13 +134,19 @@ export class App {
     this.modals = new Modals(renderer, root, () => this.renderHints())
     this.modals.applyTheme()
     // A collapsed layout shows whichever of the two last had focus, also after a click.
-    this.composer.onFocusChange(focused => { if (focused) this.showList(false); this.renderHints() })
-    this.sidebar.onFocusChange(focused => { if (focused) this.showList(true); this.renderHints() })
+    this.composer.onFocusChange(focused => { if (focused) this.showList(false); this.renderCompletions(); this.renderHints() })
+    this.sidebar.onFocusChange(focused => {
+      if (focused) this.showList(true)
+      // A filter lasts while you are in the list.
+      else if (this.listFilter !== null) this.setListFilter(null)
+      this.renderHints()
+    })
     this.toasts = new Toasts(renderer, root)
     this.commands = new Commands({
       session: () => this.session,
       ttl: () => this.ttl,
       setTtl: seconds => { this.ttl = seconds; this.render() },
+      pickLifetime: () => void this.pickLifetime(),
       theme: () => this.themeSetting,
       setTheme: setting => this.setThemeSetting(setting),
       partner: () => this.partner,
@@ -207,6 +228,7 @@ export class App {
     this.layout.fitToTerminal()
     this.composer.fit()
     this.render()
+    this.renderCompletions()
   }
 
   // Avatars are drawn once the terminal says it has the colours.
@@ -255,6 +277,21 @@ export class App {
       this.stop()
     } else if (this.modals.handleKey(key)) {
       // An open modal takes every other key.
+    } else if (this.completionKey(key) || this.filterKey(key)) {
+      // The command list or the list's filter took it.
+    } else if (key.ctrl && !key.meta && key.name === 'k') {
+      key.preventDefault()
+      void this.switchConversation()
+    } else if (key.ctrl && !key.meta && key.name === 't') {
+      key.preventDefault()
+      void this.pickLifetime()
+    } else if (key.meta && !key.ctrl && /^[1-9]$/.test(key.name)) {
+      key.preventDefault()
+      const address = this.listed[Number(key.name) - 1]
+      if (address) this.open(address)
+    } else if (this.sidebar.focused && !key.ctrl && !key.meta && key.name === '/') {
+      key.preventDefault()
+      this.setListFilter('')
     } else if (key.name === 'f1' || (key.name === '?' && this.sidebar.focused)) {
       key.preventDefault()
       void this.modals.show(HELP_MODAL)
@@ -287,6 +324,122 @@ export class App {
       key.preventDefault()
       this.transcript.scrollPage(1)
     }
+  }
+
+  /** Moves through, completes, runs or dismisses the command list; false if the key is not for it. */
+  private completionKey(key: KeyEvent): boolean {
+    // The composer reports changes late, and a key can come first.
+    if (this.composer.focused && this.composer.text !== this.completionsFor) this.composerChanged()
+    const completion = this.completing() ? this.completions[this.completionIndex] : undefined
+    if (!completion || key.ctrl || key.meta || key.shift) return false
+    if (key.name === 'up' || key.name === 'down') {
+      const count = this.completions.length
+      this.completionIndex = (this.completionIndex + (key.name === 'up' ? -1 : 1) + count) % count
+      this.renderCompletions()
+    } else if (key.name === 'tab') {
+      this.composer.setText(completedText(completion))
+    } else if (key.name === 'return') {
+      // A command that needs more waits for it, unless typed in full; any other runs.
+      if (completion.command.needsMore && this.composer.text !== `/${completion.word}`) this.composer.setText(completedText(completion))
+      else { this.composer.setText(`/${completion.word}`); this.submit() }
+    } else if (key.name === 'escape') {
+      this.completionDismissed = this.composer.text
+      this.composerChanged(true)
+    } else {
+      return false
+    }
+    key.preventDefault()
+    return true
+  }
+
+  /** The command list is on screen. */
+  private completing(): boolean {
+    return this.composer.focused && this.completions.length > 0
+  }
+
+  /** Lists the commands that complete the composer's text, unless that is what they were listed for. */
+  private composerChanged(force = false): void {
+    const text = this.composer.text
+    if (!force && text === this.completionsFor) return
+    // Changes can arrive together, so an emptied composer may never be seen.
+    if (this.completionDismissed !== null && !text.startsWith(this.completionDismissed)) this.completionDismissed = null
+    this.completions = this.completionDismissed === null ? completeCommands(text) : []
+    this.completionsFor = text
+    this.completionIndex = 0
+    this.renderCompletions()
+    this.renderHints()
+  }
+
+  private renderCompletions(): void {
+    if (this.stopped) return
+    this.composer.showCompletions(this.composer.focused ? this.completions : [], this.completionIndex)
+  }
+
+  /** Types into or clears the list's filter; false if the key is not for it. */
+  private filterKey(key: KeyEvent): boolean {
+    const filter = this.listFilter
+    if (filter === null || !this.sidebar.focused || key.ctrl || key.meta) return false
+    // ↑↓ and Enter reach the list.
+    if (key.name === 'escape') this.setListFilter(null)
+    // Rubbing out the last character ends the filter.
+    else if (key.name === 'backspace') this.setListFilter(filter ? [...filter].slice(0, -1).join('') : null)
+    else if ([...key.sequence].length === 1 && !/\p{Cc}/u.test(key.sequence)) this.setListFilter(filter + key.sequence)
+    else return false
+    key.preventDefault()
+    return true
+  }
+
+  private setListFilter(query: string | null): void {
+    this.listFilter = query
+    this.renderList()
+    if (query !== null) this.sidebar.highlightFirst()
+    this.renderHints()
+  }
+
+  /** The quick switcher: conversations by name or address, or a new one for an address typed in full. */
+  private async switchConversation(): Promise<void> {
+    const address = await this.modals.choose<Address>({
+      title: 'Switch conversation',
+      width: 76,
+      filter: 'Name or address',
+      action: 'open',
+      empty: 'No conversation matches. Type a whole 0x address to start one.',
+      items: query => this.switcherItems(query),
+    })
+    if (address && !this.stopped) this.open(address)
+  }
+
+  private switcherItems(query: string): ChoiceItem<Address>[] {
+    const rows = this.listRows()
+    const items: ChoiceItem<Address>[] = matchConversations(query, rows).map(row => ({
+      label: row.name === null ? checksumAddress(row.address) : terminalText(row.name),
+      detail: [row.name === null ? null : shortAddress(row.address), row.badge && `${row.badge} unread`].filter(Boolean).join(' · '),
+      marked: row.address === this.partner,
+      value: row.address,
+    }))
+    const typed = parseAddress(query.trim())
+    if (typed && typed !== this.identity.address && !rows.some(row => row.address === typed)) {
+      items.unshift({ label: `Start a conversation with ${checksumAddress(typed)}`, value: typed })
+    }
+    return items
+  }
+
+  /** Lists the lifetimes, the one in use marked, and switches to the one picked. */
+  private async pickLifetime(): Promise<void> {
+    const seconds = await this.modals.choose<number>({
+      title: 'Message lifetime',
+      width: 52,
+      label: 'How long new messages stay after they are opened. Unopened, they wait 24h.',
+      action: 'choose',
+      initial: MESSAGE_LIFETIMES.findIndex(lifetime => lifetime.seconds === this.ttl),
+      items: () => MESSAGE_LIFETIMES.map(({ seconds, label }) => ({
+        label, value: seconds, marked: seconds === this.ttl, detail: seconds === this.ttl ? 'in use' : undefined,
+      })),
+    })
+    if (seconds === null || this.stopped) return
+    this.ttl = seconds
+    this.toast(lifetimeNotice(seconds), 'success')
+    this.render()
   }
 
   private focusList(): void {
@@ -567,6 +720,7 @@ export class App {
     this.renderStatus()
     this.renderHints()
     this.renderList()
+    this.composer.title = ` Message · disappears ${lifetimeLabel(this.ttl)} after it is opened `
     this.transcript.renderPane({
       partner: this.partner, snapshot: this.session?.snapshot() ?? null, attentive: this.attention.attentive,
       collapsed: this.layout.collapsed, name: this.partner && this.state.name(this.partner),
@@ -583,17 +737,26 @@ export class App {
   private renderHints(): void {
     if (this.stopped) return
     const hints = this.modals.hints
-      ?? (this.sidebar.focused ? LIST_HINTS : this.composer.focused ? COMPOSER_HINTS : UNFOCUSED_HINTS)
+      ?? (this.completing() ? COMPLETION_HINTS
+        : this.sidebar.focused ? (this.listFilter === null ? LIST_HINTS : FILTER_HINTS)
+          : this.composer.focused ? COMPOSER_HINTS : UNFOCUSED_HINTS)
     this.hintBar.render(hints)
   }
 
-  private renderList(): void {
-    if (this.stopped) return
-    const rows = this.conversations.map(conversation => ({
+  /** Every listed conversation, as the list shows it. */
+  private listRows(): ListRow[] {
+    return this.conversations.map(conversation => ({
       ...conversation,
       name: this.state.name(conversation.address),
       badge: unreadBadge(this.unread.count(conversation.address, this.state.unreadAfter(conversation.address))),
     }))
+  }
+
+  private renderList(): void {
+    if (this.stopped) return
+    const rows = this.listFilter === null ? this.listRows() : filterConversations(this.listFilter, this.listRows())
+    this.listed = rows.map(row => row.address)
+    this.sidebar.showFilter(this.listFilter, rows.length)
     this.sidebar.render(rows, this.partner)
   }
 
