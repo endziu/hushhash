@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { generateKeypair } from '../../src/shared/keypair'
+import type { Address } from '../../src/shared/address'
 import { Commands, classifyInput, type CommandHost, type CommandSession } from './commands'
 import { HELP_MODAL } from './help'
 import type { ModalOptions } from './modals'
@@ -27,6 +28,9 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     confirmAnswer: true,
     confirms: 0,
     opened: [] as string[],
+    partner: null as Address | null,
+    names: [] as [Address, string][],
+    removed: [] as Address[],
     quit: false,
   }
   const host: CommandHost = {
@@ -36,7 +40,10 @@ function fakeHost(session: CommandSession | null = fakeSession()) {
     setTtl: seconds => { state.ttl = seconds },
     theme: () => state.theme,
     setTheme: setting => { state.theme = setting },
-    open: address => { state.opened.push(address) },
+    partner: () => state.partner,
+    open: address => { state.opened.push(address); state.partner = address },
+    rename: (address, name) => { state.names.push([address, name]) },
+    remove: async address => { state.removed.push(address) },
     toast: (text, kind = 'info') => { state.toasts.push({ text, kind }) },
     modal: async options => { state.modals.push(options) },
     confirm: async () => { state.confirms++; return state.confirmAnswer },
@@ -92,7 +99,7 @@ test('/open needs a valid address', () => {
   const { host, state } = fakeHost()
   const commands = new Commands(host)
   commands.run('/open nope')
-  expect(state.toasts.at(-1)).toEqual({ text: 'Usage: /open 0xADDRESS', kind: 'error' })
+  expect(state.toasts.at(-1)).toEqual({ text: 'Usage: /open 0xADDRESS [NAME]', kind: 'error' })
   const address = generateKeypair().address
   commands.run(`/new ${address}`)
   expect(state.opened).toEqual([address])
@@ -167,4 +174,31 @@ test('/quit and /exit quit', () => {
   const { host, state } = fakeHost()
   new Commands(host).run('/exit')
   expect(state.quit).toBe(true)
+})
+
+test('/open names the conversation it opens; /name renames and clears the open one', () => {
+  const { host, state } = fakeHost()
+  const commands = new Commands(host)
+  const address = generateKeypair().address
+  commands.run('/name Bob')
+  expect(state.toasts.at(-1)).toEqual({ text: 'Open a conversation first', kind: 'error' })
+  commands.run(`/open ${address} Bob   the builder`)
+  expect(state.opened).toEqual([address])
+  expect(state.names).toEqual([[address, 'Bob the builder']])
+  commands.run('/name Robert')
+  commands.run('/name')
+  expect(state.names.slice(1)).toEqual([[address, 'Robert'], [address, '']])
+  commands.run(`/open ${address}`)
+  expect(state.names).toHaveLength(3)
+})
+
+test('/remove removes the open conversation', () => {
+  const { host, state } = fakeHost()
+  const commands = new Commands(host)
+  commands.run('/remove')
+  expect(state.removed).toEqual([])
+  const address = generateKeypair().address
+  commands.run(`/open ${address}`)
+  commands.run('/remove')
+  expect(state.removed).toEqual([address])
 })

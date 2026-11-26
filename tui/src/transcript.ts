@@ -1,5 +1,5 @@
-import { BoxRenderable, ScrollBoxRenderable, StyledText, TextRenderable, dim, fg, t, type CliRenderer } from '@opentui/core'
-import { checksumAddress, shortAddress, type Address } from '../../src/shared/address'
+import { BoxRenderable, ScrollBoxRenderable, StyledText, TextRenderable, bold, dim, fg, t, type CliRenderer } from '@opentui/core'
+import { checksumAddress, type Address } from '../../src/shared/address'
 import type { SessionSnapshot } from '../../src/client/lib/conversation-session'
 import { fmtTime } from '../../src/client/lib/display'
 import { terminalText } from '../../src/cli/terminal-text'
@@ -15,6 +15,8 @@ export interface PaneState {
   attentive: boolean
   /** The list is a screen of its own, so the header says how to get back to it. */
   collapsed: boolean
+  /** The open conversation's name, if it has one; not yet made safe to show. */
+  name: string | null
 }
 
 /** A bubble is at most this share of the pane wide. */
@@ -142,7 +144,7 @@ export class Transcript {
   }
 
   /** Draws the header and the notice. */
-  renderPane({ partner, snapshot, attentive, collapsed }: PaneState): void {
+  renderPane({ partner, snapshot, attentive, collapsed, name }: PaneState): void {
     const back = collapsed ? t`${fg(COLORS.accent)('← conversations')} ${dim('Tab')}` : null
     if (!partner || !snapshot) {
       this.view.title = ' hushhash '
@@ -158,7 +160,9 @@ export class Transcript {
     this.avatar.visible = canDrawAvatars(this.renderer.capabilities)
     if (this.avatar.visible) this.avatar.content = joinLines(avatarRows(avatarGrid(partner, themeName())))
     this.title.content = joinLines([
-      t`${fg(COLORS.them)(checksumAddress(partner))}`,
+      name
+        ? t`${bold(fg(COLORS.them)(terminalText(name)))} ${dim(checksumAddress(partner))}`
+        : t`${fg(COLORS.them)(checksumAddress(partner))}`,
       back ?? t`${dim('End-to-end encrypted · messages disappear after they are opened')}`,
     ])
     const lines = noticeLines(snapshot, attentive)
@@ -170,7 +174,8 @@ export class Transcript {
    * Draws `messages`, adding and removing rows to match. Rows are kept by
    * key and only redrawn, so the one-second tick rebuilds nothing.
    */
-  renderMessages(messages: readonly ShownMessage[], partner: Address, now: number, firstNewKey: string | null): void {
+  /** `partnerLabel` heads their groups: a name or short address, already safe to show. */
+  renderMessages(messages: readonly ShownMessage[], partnerLabel: string, now: number, firstNewKey: string | null): void {
     const keys = messages.map(message => message.key)
     const keep = new Set(keys)
     for (const [key, row] of this.rows) {
@@ -191,8 +196,7 @@ export class Transcript {
       this.order = keys
     }
     const layouts = layoutRows(messages, this.self, now, firstNewKey)
-    const label = shortAddress(partner)
-    messages.forEach((message, index) => this.rows.get(message.key)!.render(layouts[index]!, message, label, now))
+    messages.forEach((message, index) => this.rows.get(message.key)!.render(layouts[index]!, message, partnerLabel, now))
   }
 }
 

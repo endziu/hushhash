@@ -1,9 +1,11 @@
 import type { CliRenderer, KeyEvent, ThemeMode } from '@opentui/core'
-import type { Address } from '../../src/shared/address'
+import { checksumAddress, type Address } from '../../src/shared/address'
 import type { LiveEvent } from '../../src/shared/live-events'
 import { ConversationSession } from '../../src/client/lib/conversation-session'
 import { errorMessage } from '../../src/client/lib/errors'
+import { displayName } from '../../src/client/lib/display'
 import { IDLE_MS, TerminalAttention } from '../../src/cli/attention'
+import { terminalText } from '../../src/cli/terminal-text'
 import type { ConnectionEpoch, IdentitySession, LiveStatus } from './identity-session'
 import { Commands, classifyInput } from './commands'
 import { HELP_MODAL } from './help'
@@ -18,6 +20,11 @@ import { Transcript } from './transcript'
 import { NewMessages, newestAccepted } from './message-view'
 import { Outbox } from './outbox'
 import { resolveTheme, setTheme, type ThemeSetting } from './theme'
+import { NAME_MAX_LENGTH, TuiState } from './state'
+import { UnreadCounts, unreadBadge } from './unread'
+
+// How many of a conversation's newest messages are fetched to count its unread ones.
+const UNREAD_PAGE = 20
 
 export interface AppOptions {
   server: string
@@ -27,6 +34,8 @@ export interface AppOptions {
   theme?: ThemeSetting
   /** How long attention lasts after input in a terminal that has not reported focus. */
   idleMs?: number
+  /** Names, last-seen times and removed conversations; default: kept in memory only. */
+  state?: TuiState
 }
 
 /**
@@ -48,8 +57,10 @@ export class App {
   private readonly layout: Layout
 
   private conversations: ConversationEntry[] = []
-  /** Conversations with messages you have not seen, and when the first of them was accepted. */
-  private readonly unread = new Map<Address, number>()
+  private readonly state: TuiState
+  private readonly unread = new UnreadCounts()
+  /** Conversations whose unread count is being fetched. */
+  private readonly counting = new Set<Address>()
   /** The newest message on screen when you switched away from each conversation, if any. */
   private readonly lastLooked = new Map<Address, number | null>()
   private session: ConversationSession | null = null
@@ -71,6 +82,14 @@ export class App {
 
   constructor(private readonly renderer: CliRenderer, private readonly identity: IdentitySession, private readonly options: AppOptions) {
     this.ttl = options.ttl
+    this.state = options.state ?? TuiState.memory(identity.address)
+    let saveFailed = false
+    this.state.onError = error => {
+      // Once: every later change would fail the same way.
+      if (saveFailed) return
+      saveFailed = true
+      this.toast(`Could not save names and read state: ${errorMessage(error, 'unknown error')}`, 'error')
+    }
     this.themeSetting = options.theme ?? 'system'
     this.terminalTheme = renderer.themeMode
     setTheme(resolveTheme(this.themeSetting, this.terminalTheme))
@@ -102,7 +121,10 @@ export class App {
       setTtl: seconds => { this.ttl = seconds; this.render() },
       theme: () => this.themeSetting,
       setTheme: setting => this.setThemeSetting(setting),
+      partner: () => this.partner,
       open: address => this.open(address),
+      rename: (address, name) => this.rename(address, name),
+      remove: address => this.confirmRemove(address),
       toast: (text, kind) => this.toast(text, kind),
       modal: options => this.modals.show(options),
       confirm: options => this.modals.confirm(options),
@@ -223,6 +245,11 @@ export class App {
     } else if (key.name === 'f1' || (key.name === '?' && this.sidebar.focused)) {
       key.preventDefault()
       void this.modals.show(HELP_MODAL)
+    } else if (this.sidebar.focused && !key.ctrl && !key.meta && (key.name === 'r' || key.name === 'd')) {
+      key.preventDefault()
+      const address = this.sidebar.highlighted
+      if (address && key.name === 'r') void this.promptName(address)
+      else if (address) void this.confirmRemove(address)
     } else if (key.name === 'tab' && !key.ctrl && !key.meta) {
       key.preventDefault()
       if (this.composer.focused) this.focusList()
@@ -280,18 +307,52 @@ export class App {
 
   private liveEvent(event: LiveEvent): void {
     this.session?.liveEvent(event)
-    if (event.type === 'conversation-cleared' && event.data.address === this.partner) {
-      this.outbox.clear()
-      this.renderMessages()
+    if (event.type === 'conversation-cleared') {
+      const { address, cleared_at } = event.data
+      // Nothing from before the clear is left to read.
+      this.state.markSeen(address, cleared_at)
+      this.unread.forget(address, cleared_at)
+      if (address === this.partner) {
+        this.outbox.clear()
+        this.renderMessages()
+      }
+      this.renderList()
     }
     if (event.type !== 'message') return
     const { id, sender, recipient, created_at } = event.data
     const partner = sender === this.identity.address ? recipient : sender
+    const looking = partner === this.partner && this.attention.attentive
     // Seen as it arrives, so not new later.
-    if (partner === this.partner && this.attention.attentive) this.newMessages.arrivedWhileLooking(id)
-    if (partner !== this.partner && sender !== this.identity.address && !this.unread.has(partner)) this.unread.set(partner, created_at)
+    if (looking) this.newMessages.arrivedWhileLooking(id)
+    // Opened as it arrives; the next count says if it was not.
+    else if (sender !== this.identity.address) this.unread.arrived(partner, id, created_at)
     this.scheduleConversationRefresh()
     this.renderList()
+  }
+
+  /** Records how far the open conversation has been read: through the newest message opened or sent. */
+  private noteSeen(): void {
+    const seen = this.session?.snapshot().seenThrough ?? null
+    if (this.partner && seen !== null) this.state.markSeen(this.partner, seen)
+  }
+
+  /** Fetches the unread count of each listed conversation that has activity since it was last counted. */
+  private countUnread(): void {
+    for (const { address, last_message_at } of this.conversations) {
+      if (last_message_at === null || this.counting.has(address)) continue
+      if (!this.unread.needsFetch(address, last_message_at, this.state.unreadAfter(address))) continue
+      this.counting.add(address)
+      this.identity.recentStamps(address, UNREAD_PAGE).then(({ messages, full }) => {
+        this.counting.delete(address)
+        this.unread.fetched(address, messages, full, last_message_at)
+        this.renderList()
+        // Activity while it was being fetched needs counting too.
+        if (!this.stopped) this.countUnread()
+      }, () => {
+        // The count stays as it was; the next activity tries again.
+        this.counting.delete(address)
+      })
+    }
   }
 
   private scheduleConversationRefresh(): void {
@@ -306,8 +367,11 @@ export class App {
       const known = new Set(listed.map(conversation => conversation.address))
       // Conversations opened here stay listed before their first message.
       const local = this.conversations.filter(conversation => !known.has(conversation.address))
-      this.conversations = [...local, ...[...listed].sort((a, b) => b.last_message_at - a.last_message_at)]
+      // Removed here, until newer activity.
+      const shown = listed.filter(conversation => !this.state.isRemoved(conversation.address, conversation.last_message_at))
+      this.conversations = [...local, ...shown.sort((a, b) => b.last_message_at - a.last_message_at)]
       this.renderList()
+      this.countUnread()
       return true
     } catch (error) {
       if (!this.identity.signal.aborted) this.toast(`Could not load conversations: ${errorMessage(error, 'unknown error')}`, 'error')
@@ -322,9 +386,9 @@ export class App {
       this.session?.dispose()
       this.transcript.reset()
       this.outbox.clear()
-      // Mark what arrived after the newest message you saw here, or from the first unread one.
-      const firstUnread = this.unread.get(partner)
-      const since = this.lastLooked.get(partner) ?? (firstUnread === undefined ? null : firstUnread - 1)
+      // Mark what arrived after the newest message you saw here, or after the last you read.
+      const after = this.state.unreadAfter(partner)
+      const since = this.lastLooked.get(partner) ?? (this.unread.count(partner, after).count > 0 ? after : null)
       this.newMessages.reset(since)
       this.partner = partner
       this.session = new ConversationSession({
@@ -335,15 +399,70 @@ export class App {
         connection: this.epoch,
         attentive: this.attention.attentive,
       })
-      this.session.subscribe(() => this.render())
+      this.session.subscribe(() => { this.noteSeen(); this.render() })
     }
-    this.unread.delete(partner)
     if (!this.conversations.some(conversation => conversation.address === partner)) {
       this.conversations.unshift({ address: partner, last_message_at: null })
     }
     // A modal keeps focus; closing it gives focus back.
     if (!this.modals.isOpen) this.focusComposer()
     this.render()
+  }
+
+  /** Asks for a name for the conversation with `address`. */
+  private async promptName(address: Address): Promise<void> {
+    const name = await this.modals.prompt({
+      title: 'Name conversation',
+      label: `A name for ${checksumAddress(address)}. It stays on this device. Leave it empty to remove the name.`,
+      value: this.state.name(address) ?? '',
+      placeholder: 'Name',
+      validate: value => [...value.trim()].length > NAME_MAX_LENGTH ? `At most ${NAME_MAX_LENGTH} characters` : null,
+    })
+    if (name !== null) this.rename(address, name)
+  }
+
+  private rename(address: Address, name: string): void {
+    const kept = this.state.setName(address, name)
+    this.toast(kept ? `Named ${terminalText(kept)}` : 'Name removed', 'success')
+    this.render()
+  }
+
+  /** Asks, then takes the conversation with `address` off this device's list. */
+  private async confirmRemove(address: Address): Promise<void> {
+    const confirmed = await this.modals.confirm({
+      title: 'Remove conversation',
+      body: `Remove ${this.label(address)} from the list on this device, and forget its name? `
+        + 'Its messages stay on the server (/clear deletes them), and it comes back if a new message arrives.',
+      action: 'Remove',
+    })
+    if (confirmed && !this.stopped) this.remove(address)
+  }
+
+  private remove(address: Address): void {
+    const lastMessageAt = this.conversations.find(conversation => conversation.address === address)?.last_message_at ?? null
+    this.state.remove(address, lastMessageAt)
+    this.unread.forget(address, lastMessageAt)
+    this.lastLooked.delete(address)
+    this.conversations = this.conversations.filter(conversation => conversation.address !== address)
+    if (address === this.partner) this.close()
+    this.toast('Conversation removed from this device', 'success')
+    this.render()
+  }
+
+  /** Closes the open conversation, leaving the list. */
+  private close(): void {
+    this.session?.dispose()
+    this.session = null
+    this.partner = null
+    this.transcript.reset()
+    this.outbox.clear()
+    this.newMessages.reset(null)
+    if (!this.modals.isOpen) this.focusList()
+  }
+
+  /** The conversation's name, else its short address, safe to show. */
+  private label(address: Address): string {
+    return terminalText(displayName(address, this.state.names(), this.identity.address))
   }
 
   private submit(): void {
@@ -384,7 +503,7 @@ export class App {
     this.renderList()
     this.transcript.renderPane({
       partner: this.partner, snapshot: this.session?.snapshot() ?? null, attentive: this.attention.attentive,
-      collapsed: this.layout.collapsed,
+      collapsed: this.layout.collapsed, name: this.partner && this.state.name(this.partner),
     })
     this.renderMessages()
   }
@@ -403,7 +522,13 @@ export class App {
   }
 
   private renderList(): void {
-    this.sidebar.render(this.conversations, this.unread, this.partner)
+    if (this.stopped) return
+    const rows = this.conversations.map(conversation => ({
+      ...conversation,
+      name: this.state.name(conversation.address),
+      badge: unreadBadge(this.unread.count(conversation.address, this.state.unreadAfter(conversation.address))),
+    }))
+    this.sidebar.render(rows, this.partner)
   }
 
   private renderMessages(): void {
@@ -411,6 +536,6 @@ export class App {
     const snapshot = this.session.snapshot()
     const now = snapshot.now()
     const messages = this.outbox.merge(snapshot.messages, now)
-    this.transcript.renderMessages(messages, this.partner, now, this.newMessages.first(messages, this.partner))
+    this.transcript.renderMessages(messages, this.label(this.partner), now, this.newMessages.first(messages, this.partner))
   }
 }

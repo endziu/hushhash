@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RGBA } from '@opentui/core'
 import { createTestRenderer, setRendererCapabilities } from '@opentui/core/testing'
 import { initDb, getDb, savePushSubscription } from '../../src/server/db'
@@ -7,12 +10,13 @@ import { setPushSender } from '../../src/server/push'
 import * as limiters from '../../src/server/rate-limiters'
 import * as constants from '../../src/server/constants'
 import { checksumAddress, shortAddress, type Address } from '../../src/shared/address'
-import { generateKeypair } from '../../src/shared/keypair'
+import { generateKeypair, type Keypair } from '../../src/shared/keypair'
 import { ChatClient } from '../../src/cli/client'
 import { IdentitySession } from './identity-session'
 import { App } from './app'
 import { sidebarWidth } from './sidebar'
 import { PALETTES, setTheme, type ThemeSetting } from './theme'
+import { TuiState } from './state'
 
 type Setup = Awaited<ReturnType<typeof createTestRenderer>>
 
@@ -44,6 +48,7 @@ afterEach(async () => {
   logging.mockRestore()
   getDb().close()
   setTheme('dark')
+  for (const cleanup of cleanups.splice(0)) cleanup()
 })
 
 interface StartOptions {
@@ -51,17 +56,39 @@ interface StartOptions {
   theme?: ThemeSetting
   /** Report a truecolor terminal, so avatars are drawn. */
   truecolor?: boolean
+  /** The identity to sign in as; default: a new one. */
+  keypair?: Keypair
+  /** A state file to load; default: state in memory. */
+  statePath?: string
 }
 
-async function start(partner: Address | undefined = alice.identity.address, height = 32, idleMs?: number, options: StartOptions = {}) {
-  identitySession = new IdentitySession(server.url.origin, generateKeypair())
+/** Opens `partner` at start, Alice by default; null opens nothing. */
+async function start(partner: Address | null | undefined = alice.identity.address, height = 32, idleMs?: number, options: StartOptions = {}) {
+  const keypair = options.keypair ?? generateKeypair()
+  identitySession = new IdentitySession(server.url.origin, keypair)
   await identitySession.login()
   setup = await createTestRenderer({ width: options.width ?? 110, height })
   if (options.truecolor) setRendererCapabilities(setup.renderer, { rgb: true })
-  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner, idleMs, theme: options.theme })
+  const state = options.statePath ? TuiState.load(options.statePath, keypair.address) : undefined
+  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, state })
   void app.run()
   await until(() => frame().includes('● connected'), 'live connection')
 }
+
+/** Quits the app and signs it out, as quitting the TUI does. */
+async function quit() {
+  app.stop()
+  await identitySession.close()
+}
+
+/** A fresh state file path, removed after the test. */
+function tempStatePath(): string {
+  const directory = mkdtempSync(join(tmpdir(), 'hushhash-tui-app-'))
+  cleanups.push(() => rmSync(directory, { recursive: true, force: true }))
+  return join(directory, 'tui-state.json')
+}
+
+const cleanups: (() => void)[] = []
 
 function frame(): string {
   return setup.captureCharFrame()
@@ -85,6 +112,16 @@ async function clickConversation(address: Address) {
   if (y < 0) throw new Error(`${shortAddress(address)} is not visible in the list\n${frame()}`)
   await setup.mockMouse.click(lines[y]!.indexOf(shortAddress(address)), y)
   await setup.renderOnce()
+}
+
+/** The list row of `label`, if it is on screen. */
+function listRow(label: string): string | undefined {
+  return frame().split('\n').map(line => line.slice(0, listWidth())).find(line => line.includes(label))
+}
+
+/** The unread count shown beside `label` in the list, or null. */
+function unreadShown(label: string): string | null {
+  return listRow(label)?.match(/ (\d\+?|9\+) │?\s*$/)?.[1] ?? null
 }
 
 /** The status bar, on the top line. */
@@ -235,7 +272,7 @@ test('marks other conversations unread and opens them from the list', async () =
   try {
     await start(carol.identity.address)
     const message = await alice.send(identitySession.address, 'from alice')
-    await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'unread marker')
+    await until(() => unreadShown(shortAddress(alice.identity.address)) === '1', 'unread marker')
     expect(openedAt(message.id)).toBeNull()
     setup.mockInput.pressTab()
     await setup.renderOnce()
@@ -246,7 +283,7 @@ test('marks other conversations unread and opens them from the list', async () =
     setup.mockInput.pressEnter()
     await until(() => frame().includes('from alice'), 'alice conversation opened')
     expect(openedAt(message.id)).not.toBeNull()
-    expect(frame()).not.toContain(`● ${shortAddress(alice.identity.address)}`)
+    await until(() => unreadShown(shortAddress(alice.identity.address)) === null, 'read')
   } finally {
     await carol.close()
   }
@@ -389,7 +426,7 @@ test('clicking a conversation in the list opens it', async () => {
   try {
     await start(carol.identity.address)
     const message = await alice.send(identitySession.address, 'clicked open')
-    await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'alice listed')
+    await until(() => unreadShown(shortAddress(alice.identity.address)) === '1', 'alice listed')
     await clickConversation(alice.identity.address)
     await until(() => frame().includes('clicked open'), 'alice conversation opened by click')
     expect(openedAt(message.id)).not.toBeNull()
@@ -476,7 +513,7 @@ test('a divider marks what arrived while you were elsewhere, until you send', as
   try {
     await start(carol.identity.address)
     await alice.send(identitySession.address, 'while elsewhere')
-    await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'unread marker')
+    await until(() => unreadShown(shortAddress(alice.identity.address)) === '1', 'unread marker')
     await setup.mockInput.typeText(`/open ${alice.identity.address}`)
     setup.mockInput.pressEnter()
     await until(() => frame().includes('while elsewhere'), 'alice opened')
@@ -500,7 +537,7 @@ test('the divider still shows when the local clock is behind the server', async 
     await start(carol.identity.address)
     await until(() => !frame().includes('Loading…'), 'carol synchronized')
     await alice.send(identitySession.address, 'sent before the clock drifted')
-    await until(() => frame().includes(`● ${shortAddress(alice.identity.address)}`), 'unread marker')
+    await until(() => unreadShown(shortAddress(alice.identity.address)) === '1', 'unread marker')
     await setup.mockInput.typeText(`/open ${alice.identity.address}`)
     // Opening runs within Enter. Only the local clock falls behind there, not
     // the in-process server's, nor the open conversation's server time.
@@ -649,4 +686,133 @@ test('avatars show in the list, the header and the status bar where colours allo
 test('a terminal without 256 colours shows no avatars', async () => {
   await start()
   expect(frame()).not.toContain('▀')
+})
+
+async function command(line: string) {
+  await setup.mockInput.typeText(line)
+  setup.mockInput.pressEnter()
+  await setup.renderOnce()
+}
+
+test('r in the list names a conversation; the name shows in the list, header and transcript', async () => {
+  await start()
+  const short = shortAddress(alice.identity.address)
+  await alice.send(identitySession.address, 'hello from alice')
+  await until(() => frame().includes('hello from alice'), 'message rendered')
+  setup.mockInput.pressTab()
+  await setup.mockInput.typeText('r')
+  await until(() => frame().includes(' Name conversation '), 'name prompt')
+  await setup.mockInput.typeText('Alice\x1b]0;pwned\x07')
+  setup.mockInput.pressEnter()
+  await until(() => !frame().includes(' Name conversation '), 'prompt closed')
+  await until(() => listRow('Alice') !== undefined, 'name in the list')
+  // The short address moves to the second line.
+  const lines = frame().split('\n')
+  const row = lines.findIndex(line => line.slice(0, listWidth()).includes('Alice'))
+  expect(lines[row + 1]!.slice(0, listWidth())).toContain(short)
+  expect(paneTitle()).toContain('Alice')
+  expect(paneTitle()).toContain(checksumAddress(alice.identity.address))
+  const pane = frame().split('\n').map(line => line.slice(listWidth()))
+  expect(pane[pane.findIndex(line => line.includes('hello from alice')) - 1]).toContain('Alice')
+  // Control characters in a name are shown escaped, never sent to the terminal.
+  expect(frame()).not.toContain('\x1b')
+
+  await setup.mockInput.typeText('\t/name')
+  setup.mockInput.pressEnter()
+  await until(() => listRow('Alice') === undefined, 'name cleared')
+  expect(listRow(short)).toBeDefined()
+})
+
+test('/open ADDRESS NAME names the conversation as it opens it', async () => {
+  await start(undefined)
+  await command(`/open ${alice.identity.address} Alice Liddell`)
+  await until(() => paneTitle().includes('Alice Liddell'), 'named in the header')
+  expect(listRow('Alice Liddell')).toBeDefined()
+})
+
+test('unread counts survive a restart; opening clears them only while attentive', async () => {
+  const keypair = generateKeypair()
+  const statePath = tempStatePath()
+  const short = shortAddress(alice.identity.address)
+  await start(null, 32, undefined, { keypair, statePath })
+  await alice.send(keypair.address, 'one')
+  await until(() => unreadShown(short) === '1', 'counted live')
+  await quit()
+
+  await alice.send(keypair.address, 'two')
+  const third = await alice.send(keypair.address, 'three')
+  await start(null, 32, undefined, { keypair, statePath })
+  await until(() => unreadShown(short) === '3', 'counted after a restart')
+  // Bold while unread.
+  const name = setup.captureSpans().lines.flatMap(line => line.spans).find(span => span.text.includes(short))!
+  expect(name.attributes & 1).toBe(1)
+
+  // Opening it while away opens nothing, so it stays unread, also after a restart.
+  setup.renderer.emit('blur')
+  await until(() => shownAway(), 'away')
+  app.open(alice.identity.address)
+  await until(() => frame().includes('Away: new messages'), 'conversation open while away')
+  await Bun.sleep(300)
+  expect(openedAt(third.id)).toBeNull()
+  expect(unreadShown(short)).toBe('3')
+  await quit()
+
+  await start(null, 32, undefined, { keypair, statePath })
+  await until(() => unreadShown(short) === '3', 'still unread')
+  setup.mockInput.pressTab()
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('three'), 'opened while attentive')
+  await until(() => unreadShown(short) === null, 'read')
+  await quit()
+
+  await start(null, 32, undefined, { keypair, statePath })
+  await until(() => listRow(short) !== undefined, 'listed')
+  await Bun.sleep(300)
+  await setup.renderOnce()
+  expect(unreadShown(short)).toBeNull()
+}, 20_000)
+
+test('d removes a conversation from the list until a new message arrives, across a restart', async () => {
+  const keypair = generateKeypair()
+  const statePath = tempStatePath()
+  const short = shortAddress(alice.identity.address)
+  await start(null, 32, undefined, { keypair, statePath })
+  await alice.send(keypair.address, 'before removing')
+  await until(() => listRow(short) !== undefined, 'listed')
+  await command(`/open ${alice.identity.address} Alice`)
+  setup.mockInput.pressTab()
+  await setup.mockInput.typeText('d')
+  await until(() => frame().includes(' Remove conversation '), 'confirmation asked')
+  expect(frame()).toContain('Its messages stay on the server')
+  setup.mockInput.pressEscape()
+  await until(() => !frame().includes(' Remove conversation '), 'cancelled')
+  expect(listRow('Alice')).toBeDefined()
+
+  await setup.mockInput.typeText('d')
+  await until(() => frame().includes(' Remove conversation '), 'asked again')
+  await setup.mockInput.typeText('y')
+  await until(() => listRow('Alice') === undefined && listRow(short) === undefined, 'removed')
+  // Not deleted on the server.
+  expect((await alice.read(keypair.address, undefined, { confirmAvailability: false })).messages).toHaveLength(1)
+  await quit()
+
+  await start(null, 32, undefined, { keypair, statePath })
+  await Bun.sleep(300)
+  await setup.renderOnce()
+  expect(listRow(short)).toBeUndefined()
+
+  await alice.send(keypair.address, 'after removing')
+  // Back, unnamed, and counting only what came after the removal.
+  await until(() => unreadShown(short) === '1', 'back with new activity')
+  expect(listRow('Alice')).toBeUndefined()
+}, 15_000)
+
+test('/remove closes the open conversation', async () => {
+  await start()
+  await command('/remove')
+  await until(() => frame().includes(' Remove conversation '), 'confirmation asked')
+  await setup.mockInput.typeText('y')
+  await until(() => frame().includes('Share it, then start a conversation'), 'conversation closed')
+  expect(listRow(shortAddress(alice.identity.address))).toBeUndefined()
+  expect(hintLine()).toContain('Enter open')
 })
