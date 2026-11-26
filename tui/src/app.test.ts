@@ -16,7 +16,8 @@ import { ChatClient } from '../../src/cli/client'
 import { IdentitySession } from './identity-session'
 import { App } from './app'
 import { sidebarWidth } from './sidebar'
-import { PALETTES, setTheme, type ThemeSetting } from './theme'
+import { PALETTES, setTheme, type Theme, type ThemeSetting } from './theme'
+import type { DesktopTheme } from './omarchy-theme'
 import { TuiState } from './state'
 import { HIDDEN_KEY } from './key-backup'
 
@@ -59,6 +60,7 @@ afterEach(async () => {
 interface StartOptions {
   width?: number
   theme?: ThemeSetting
+  desktopTheme?: DesktopTheme
   /** Report a truecolor terminal, so avatars are drawn. */
   truecolor?: boolean
   /** Report a terminal that supports hyperlinks. */
@@ -119,7 +121,7 @@ async function start(partner: Address | null | undefined = alice.identity.addres
   if (options.truecolor) setRendererCapabilities(setup.renderer, { rgb: true })
   if (options.hyperlinks) setRendererCapabilities(setup.renderer, { hyperlinks: true })
   const state = options.statePath ? TuiState.load(options.statePath, keypair.address) : undefined
-  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, state, identityPath: options.identityPath, bell: () => { bells++ } })
+  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, desktopTheme: options.desktopTheme, state, identityPath: options.identityPath, bell: () => { bells++ } })
   void app.run()
   await until(() => frame().includes('● connected'), 'live connection')
 }
@@ -717,6 +719,32 @@ test('an open dialog and toasts on screen repaint when the terminal theme change
   await until(() => colorOf(' Help ').join() === ints(PALETTES.light.accent).join(), 'dialog repainted')
   expect(colorOf('Commands')).toEqual(ints(PALETTES.light.text))
   expect(colorOf('Theme system.')).toEqual(ints(PALETTES.light.text))
+})
+
+test('/theme omarchy follows the desktop theme as it changes, and says when there is none', async () => {
+  await start()
+  await setup.mockInput.typeText('/theme omarchy')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('No Omarchy theme to follow here'), 'no desktop theme')
+  expect(colorOf('hushhash')).toEqual(ints(PALETTES.dark.accent))
+  await quit()
+
+  const listeners = new Set<() => void>()
+  const desktop: { current: Theme } & DesktopTheme = {
+    current: { name: 'dark', palette: { ...PALETTES.dark, accent: PALETTES.light.ok } },
+    subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener) },
+  }
+  await start(undefined, 32, undefined, { theme: 'omarchy', desktopTheme: desktop })
+  expect(colorOf('hushhash')).toEqual(ints(PALETTES.light.ok))
+  desktop.current = { name: 'light', palette: { ...PALETTES.light, accent: PALETTES.dark.error } }
+  for (const listener of listeners) listener()
+  await until(() => colorOf('hushhash').join() === ints(PALETTES.dark.error).join(), 'desktop theme switched')
+  // The terminal's background no longer decides.
+  setup.renderer.emit('theme_mode', 'dark')
+  await setup.renderOnce()
+  expect(colorOf('hushhash')).toEqual(ints(PALETTES.dark.error))
+  app.stop()
+  expect(listeners.size).toBe(0)
 })
 
 test('--theme light starts in the light palette', async () => {
