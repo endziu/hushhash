@@ -39,11 +39,13 @@ or an open dialog. A narrow terminal drops the less important parts of both line
 | Ctrl+B | Hide or show the conversation list; in a narrow terminal, switch screens |
 | F1, or ? in the list | Help |
 | Enter in the list | Open that conversation |
+| r in the list | Name that conversation |
+| d in the list | Remove that conversation from the list (asks first) |
 | Click in the list | Open that conversation; the mouse wheel moves the highlight |
 | PageUp / PageDown | Scroll; PageUp at the top loads older messages |
 | Ctrl+C | Quit |
 
-Commands typed in the composer: `/open ADDRESS` (or `/new`), `/ttl [5m|300]`, `/theme [system|light|dark]`, `/clear` (asks in a
+Commands typed in the composer: `/open ADDRESS [NAME]` (or `/new`), `/name [NAME]`, `/remove`, `/ttl [5m|300]`, `/theme [system|light|dark]`, `/clear` (asks in a
 dialog first), `/retry`, `/older`, `/address`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
 single line; multi-line text that starts with `/` is sent as a message. Start a one-line message
 with `//` to send text that begins with `/`; multi-line text is sent as typed. A mistyped command
@@ -81,8 +83,23 @@ Below 70 columns, or after Ctrl+B, the list is a screen of its own: Tab or Esc s
 and the conversation, whose header says `← conversations`. Otherwise the sidebar widens with the
 terminal, from 24 to 36 columns. The composer grows with its text up to eight lines.
 
-A `●` in the list marks a conversation with messages that arrived while another was open. It is
-kept in memory only.
+## Names, unread and removed conversations
+
+Name a conversation with r in the list, `/name NAME` or `/open ADDRESS NAME`; `/name` alone removes
+the name. The name replaces the short address in the list, which moves to the second line, and in
+the conversation header and message headers. Names are at most 64 characters.
+
+The list counts the messages from your partner that you have not seen (`3`, `9+`; `3+` when older
+ones may be missing from a long conversation) and shows their names in bold. A conversation is
+seen through the newest message opened in it, so one that is open while you are away stays unread.
+
+d in the list, or `/remove`, takes a conversation off the list on this device and forgets its name.
+Its messages stay on the server (`/clear` deletes them). It comes back, unnamed, when a new message
+arrives, and only what came after the removal counts as unread.
+
+All three are kept in `tui-state.json` beside the identity file, mode 0600, keyed by your address
+so several identities can share it. Nothing in it leaves the machine, and it is separate from the
+browser's names. A missing or unreadable file starts empty.
 
 ## Attention
 

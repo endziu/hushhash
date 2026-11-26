@@ -8,6 +8,7 @@ import { DEFAULT_IDENTITY_HELP, defaultIdentityPath, loadIdentity } from '../../
 import { terminalText } from '../../src/cli/terminal-text'
 import { FALLBACK_MESSAGE_LIFETIME } from '../../src/client/lib/message-lifetime'
 import { IdentitySession } from './identity-session'
+import { TuiState, statePath } from './state'
 import { App } from './app'
 import { LIFETIME_CHOICES_TEXT, lifetimeLabel, parseLifetime } from './lifetime'
 import { THEME_SETTINGS, parseThemeSetting } from './theme'
@@ -67,7 +68,8 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
         : new Error(`Cannot sign in to ${server}: ${cause instanceof Error ? cause.message : 'unknown error'}`)
     })
     const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
-    const app = new App(renderer, identitySession, { server, ttl, partner, theme })
+    const state = TuiState.load(statePath(identityPath), identity.address)
+    const app = new App(renderer, identitySession, { server, ttl, partner, theme, state })
     await app.run()
     await renderer.closed
   } finally {

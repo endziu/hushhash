@@ -41,7 +41,13 @@ export interface CommandHost {
   setTtl(seconds: number): void
   theme(): ThemeSetting
   setTheme(setting: ThemeSetting): void
+  /** The open conversation's partner, or null. */
+  partner(): Address | null
   open(address: Address): void
+  /** Names a conversation; an empty name removes it. */
+  rename(address: Address, name: string): void
+  /** Asks, then removes a conversation from this device's list. */
+  remove(address: Address): Promise<void>
   toast(text: string, kind?: ToastKind): void
   modal(options: ModalOptions): Promise<void>
   confirm(options: ConfirmOptions): Promise<boolean>
@@ -61,9 +67,23 @@ export class Commands {
     switch (name) {
       case '/open':
       case '/new': {
-        const address = parseAddress(arg)
-        if (!address) host.toast('Usage: /open 0xADDRESS', 'error')
-        else host.open(address)
+        const [first, ...rest] = args
+        const address = parseAddress(first)
+        if (!address) { host.toast('Usage: /open 0xADDRESS [NAME]', 'error'); return true }
+        host.open(address)
+        if (rest.length && host.partner() === address) host.rename(address, rest.join(' '))
+        return true
+      }
+      case '/name': {
+        const partner = host.partner()
+        if (!partner) host.toast('Open a conversation first', 'error')
+        else host.rename(partner, arg)
+        return true
+      }
+      case '/remove': {
+        const partner = host.partner()
+        if (!partner) host.toast('Open a conversation first', 'error')
+        else void host.remove(partner)
         return true
       }
       case '/ttl': {

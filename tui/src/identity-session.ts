@@ -1,9 +1,10 @@
-import type { Address } from '../../src/shared/address'
+import { parseAddress, type Address } from '../../src/shared/address'
 import { parseLiveEvent, type LiveEvent } from '../../src/shared/live-events'
 import { sealMessage, unsealMessage, type DecryptedMessage } from '../../src/shared/protocol-client'
 import type { ConversationProtocol, SessionOptions } from '../../src/client/lib/conversation-session'
 import { ChatClient } from '../../src/cli/client'
 import { setTimeout as delay } from 'node:timers/promises'
+import type { MessageStamp } from './unread'
 
 const MAX_BACKOFF_MS = 30_000
 
@@ -53,6 +54,20 @@ export class IdentitySession extends ChatClient {
         return this.authenticated(token => this.api.send(this.identity, envelope, token))
       },
     }
+  }
+
+  /**
+   * Who sent the newest `limit` messages with `partner`, and when, without
+   * decrypting them; `full` when there may be older ones.
+   */
+  async recentStamps(partner: Address, limit: number): Promise<{ messages: MessageStamp[]; full: boolean }> {
+    const page = await this.authenticated(token => this.api.history(partner, token, { limit }))
+    const messages: MessageStamp[] = []
+    for (const raw of page.messages as { id?: unknown; sender?: unknown; created_at?: unknown }[]) {
+      const sender = parseAddress(raw?.sender)
+      if (typeof raw?.id === 'string' && sender && typeof raw.created_at === 'number') messages.push({ id: raw.id, sender, created_at: raw.created_at })
+    }
+    return { messages, full: page.messages.length >= limit }
   }
 
   /** Verifies and decrypts a delivered message of the conversation with `partner`; null for anything else. */
