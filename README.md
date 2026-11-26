@@ -56,7 +56,8 @@ or `bun run cli --help`.
 ## Full-screen terminal client
 
 `tui/` holds a separate full-screen client built with [OpenTUI](https://opentui.com/docs/). It
-uses the CLI's identity file. After the install below and `bun run cli --server prod init`:
+uses the CLI's identity file, and without one offers to create a new identity or import a key.
+After the install below:
 
 ```sh
 cd tui && bun install

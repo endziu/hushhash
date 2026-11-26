@@ -20,7 +20,7 @@ test('typing narrows the list, ignoring case, and aliases complete as typed', ()
 test('an exact name comes first', () => {
   expect(words('/o')).toEqual(['open', 'older'])
   expect(words('/older')).toEqual(['older'])
-  expect(words('/n')).toEqual(['new', 'name'])
+  expect(words('/n')).toEqual(['new', 'name', 'notify'])
   expect(words('/name')).toEqual(['name'])
 })
 

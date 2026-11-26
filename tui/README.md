@@ -5,15 +5,21 @@ separate from the scriptable CLI in `src/cli` and has its own dependencies.
 
 ## Run
 
-From the repository root, install both packages and create an identity once:
+From the repository root, install both packages:
 
 ```sh
 bun install
-bun run cli --server prod init
 cd tui && bun install
 bun run start --server prod
 bun run start --server prod 0xPARTNER_ADDRESS   # open a conversation at start
 ```
+
+Without an identity, the TUI opens on a welcome screen that explains the key and offers to create a
+new identity or import a key you backed up. An imported key is pasted into a field that shows a •
+for each character, never the key. Either way the TUI signs in to the server first and saves the
+identity only once that works, in the file the CLI uses (mode 0600), so a connection error leaves
+nothing half made: it shows on the welcome screen, and you can try again. With an identity, the TUI
+signs in before it takes over the screen, so a connection error stays readable.
 
 `--server`, `--identity`, `HUSHHASH_SERVER` and `HUSHHASH_IDENTITY` work as in the
 [CLI](../docs/cli.md), so the TUI and CLI share one identity. `--ttl 5m` sets the lifetime of sent
@@ -56,7 +62,7 @@ type. ↑↓ choose one, Tab completes it and Enter runs it; a command that need
 `/open`, is filled in for you to finish, unless you typed it in full. Esc hides the list until you
 type something else. Arguments, `//text` and multi-line text get no list.
 
-Commands typed in the composer: `/open ADDRESS [NAME]` (or `/new`), `/name [NAME]`, `/remove`, `/ttl [5m|300]` (alone, a list to pick from), `/theme [system|light|dark]`, `/clear` (asks in a
+Commands typed in the composer: `/open ADDRESS [NAME]` (or `/new`), `/name [NAME]`, `/remove`, `/ttl [5m|300]` (alone, a list to pick from), `/theme [system|light|dark]`, `/notify [on|off]`, `/clear` (asks in a
 dialog first), `/retry`, `/older`, `/share` (or `/address`), `/key`, `/log`, `/help`, `/quit` (or `/exit`). A command is a
 single line; multi-line text that starts with `/` is sent as a message. Start a one-line message
 with `//` to send text that begins with `/`; multi-line text is sent as typed. A mistyped command
@@ -121,7 +127,7 @@ d in the list, or `/remove`, takes a conversation off the list on this device an
 Its messages stay on the server (`/clear` deletes them). It comes back, unnamed, when a new message
 arrives, and only what came after the removal counts as unread.
 
-All three are kept in `tui-state.json` beside the identity file, mode 0600, keyed by your address
+All three, and whether notifications are on, are kept in `tui-state.json` beside the identity file, mode 0600, keyed by your address
 so several identities can share it. Nothing in it leaves the machine, and it is separate from the
 browser's names. A missing or unreadable file starts empty.
 
@@ -144,7 +150,24 @@ is, with the private key hidden until v shows it; c copies it. The key hides aga
 closes or you look away (see [Attention](#attention)). Anyone with the key can read your messages
 and send messages as you, so keep it secret, and never import a key from a crypto wallet that holds
 money or anything else of value. Your clipboard and terminal scrollback may keep the key after you
-copy or show it. To import or replace a key, use the CLI's `import`.
+copy or show it. To replace a key, use the CLI's `import`; the welcome screen imports one only when
+there is no identity yet.
+
+## Notifications and the title
+
+The terminal's title shows how many messages are unread across your conversations:
+`hushhash (3)`, or `hushhash` when nothing is. The TUI saves the title it found and puts it back
+when it quits, where the terminal supports that (most do); elsewhere the title is cleared.
+
+A message that arrives while you are away (see [Attention](#attention)) shows a desktop notification
+through the terminal: OSC 99 in kitty and foot, OSC 777 in WezTerm, Ghostty and others that report
+it. A terminal without them, such as tmux, gets a bell instead, which tmux can pass on with
+`monitor-bell` and `bell-action`. The notification says only "hushhash: New message", never who sent
+it or what it says, like push notifications. A burst makes one: there is at most one every
+5 seconds. Nothing is sent while you are at the screen.
+
+`/notify off` turns notifications off and `/notify on` back on; `/notify` alone says which. The
+choice is kept per identity in `tui-state.json` (see below), and they are on until turned off.
 
 ## Attention
 

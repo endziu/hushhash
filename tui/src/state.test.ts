@@ -97,3 +97,16 @@ test('a failed save is reported and the state in memory kept', () => {
   expect(errors).toHaveLength(1)
   expect(state.name(bob)).toBe('Bob')
 })
+
+test('desktop notifications are on until turned off, per identity', () => {
+  const other = generateKeypair().address
+  const state = TuiState.load(path, self)
+  expect(state.notifications()).toBe(true)
+  state.setNotifications(false)
+  expect(TuiState.load(path, self).notifications()).toBe(false)
+  expect(TuiState.load(path, other).notifications()).toBe(true)
+  TuiState.load(path, self).setNotifications(true)
+  expect(TuiState.load(path, self).notifications()).toBe(true)
+  // On is the default, so it is not written.
+  expect(JSON.parse(readFileSync(path, 'utf8')).identities[self]).toEqual({ conversations: {} })
+})

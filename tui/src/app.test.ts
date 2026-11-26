@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Writable } from 'node:stream'
 import { RGBA } from '@opentui/core'
 import { createTestRenderer, setRendererCapabilities } from '@opentui/core/testing'
 import { initDb, getDb, savePushSubscription } from '../../src/server/db'
@@ -27,6 +28,9 @@ let identitySession: IdentitySession
 let app: App
 let alice: ChatClient
 let pushes: number
+/** What the app wrote to the terminal, when started with `terminal`. */
+let output: RecordingStdout
+let bells: number
 let logging: ReturnType<typeof spyOn>
 
 beforeEach(async () => {
@@ -65,6 +69,33 @@ interface StartOptions {
   keypair?: Keypair
   /** A state file to load; default: state in memory. */
   statePath?: string
+  /**
+   * Set the terminal up as a real one is, recording what is written to
+   * `output`, and have it name itself (XTVERSION) as this, such as
+   * `WezTerm 20240203`; '' names none.
+   */
+  terminal?: string
+}
+
+/** A terminal's stdout that keeps every write. */
+class RecordingStdout extends Writable {
+  readonly isTTY = true
+  private readonly writes: Buffer[] = []
+  constructor(readonly columns: number, readonly rows: number) { super() }
+  override _write(chunk: Buffer, _encoding: BufferEncoding, done: () => void) { this.writes.push(Buffer.from(chunk)); done() }
+  getColorDepth() { return 24 }
+  text() { return Buffer.concat(this.writes).toString() }
+  clear() { this.writes.length = 0 }
+}
+
+/** The desktop notifications written to `output`. */
+function notificationsSent(): number {
+  return output.text().split('\x1b]777;notify;hushhash;New message').length - 1
+}
+
+/** The terminal titles written to `output`, in order. */
+function titlesSet(): string[] {
+  return output.text().split('\x1b]0;').slice(1).map(title => title.slice(0, title.indexOf('\x07')))
 }
 
 /** Opens `partner` at start, Alice by default; null opens nothing. */
@@ -72,11 +103,23 @@ async function start(partner: Address | null | undefined = alice.identity.addres
   const keypair = options.keypair ?? generateKeypair()
   identitySession = new IdentitySession(server.url.origin, keypair)
   await identitySession.login()
-  setup = await createTestRenderer({ width: options.width ?? 110, height })
+  bells = 0
+  if (options.terminal === undefined) {
+    setup = await createTestRenderer({ width: options.width ?? 110, height })
+  } else {
+    output = new RecordingStdout(options.width ?? 110, height)
+    setup = await createTestRenderer({ width: options.width ?? 110, height, stdout: output as unknown as NodeJS.WriteStream, bufferedOutput: 'stdout' })
+    const ready = setup.renderer.setupTerminal()
+    const stdin = (setup.renderer as unknown as { stdin: NodeJS.ReadStream }).stdin
+    // Answers XTVERSION once it is asked.
+    while (options.terminal && !output.text().includes('\x1b[>0q')) await Bun.sleep(5)
+    if (options.terminal) stdin.emit('data', Buffer.from(`\x1bP>|${options.terminal}\x1b\\`))
+    await ready
+  }
   if (options.truecolor) setRendererCapabilities(setup.renderer, { rgb: true })
   if (options.hyperlinks) setRendererCapabilities(setup.renderer, { hyperlinks: true })
   const state = options.statePath ? TuiState.load(options.statePath, keypair.address) : undefined
-  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, state, identityPath: options.identityPath })
+  app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, state, identityPath: options.identityPath, bell: () => { bells++ } })
   void app.run()
   await until(() => frame().includes('● connected'), 'live connection')
 }
@@ -1114,4 +1157,53 @@ test('/ttl and Ctrl+T list the lifetimes; the one picked shows on the composer',
   await setup.mockInput.typeText('short lived')
   setup.mockInput.pressEnter()
   await until(async () => (await sentByTui()).some(message => message.ttl === 3600), 'sent with the picked lifetime')
+})
+
+test('a message that arrives while away notifies the desktop once per burst, without its contents', async () => {
+  await start(alice.identity.address, 32, undefined, { terminal: 'WezTerm 20240203' })
+  await alice.send(identitySession.address, 'seen-at-the-screen')
+  await until(() => frame().includes('seen-at-the-screen'), 'message while attentive')
+  await Bun.sleep(200)
+  expect(notificationsSent()).toBe(0)
+
+  setup.renderer.emit('blur')
+  await alice.send(identitySession.address, 'burst-one')
+  await alice.send(identitySession.address, 'burst-two')
+  await until(() => notificationsSent() === 1, 'notification')
+  await Bun.sleep(300)
+  expect(notificationsSent()).toBe(1)
+  expect(output.text()).not.toContain('burst-')
+  expect(bells).toBe(0)
+})
+
+test('a terminal without desktop notifications rings the bell', async () => {
+  await start(alice.identity.address, 32, undefined, { terminal: 'tmux 3.4' })
+  // Past the start-up queries, which ask about notifications too.
+  output.clear()
+  setup.renderer.emit('blur')
+  await alice.send(identitySession.address, 'ring')
+  await until(() => bells === 1, 'bell')
+  for (const notification of ['\x1b]777;', '\x1b]99;', '\x1b]9;']) expect(output.text()).not.toContain(notification)
+})
+
+test('/notify off keeps the desktop quiet', async () => {
+  await start(alice.identity.address, 32, undefined, { terminal: 'WezTerm 20240203' })
+  await setup.mockInput.typeText('/notify off')
+  setup.mockInput.pressEnter()
+  await until(() => frame().includes('Notifications off'), 'turned off')
+  setup.renderer.emit('blur')
+  await alice.send(identitySession.address, 'quiet')
+  await Bun.sleep(800)
+  expect(notificationsSent()).toBe(0)
+  expect(bells).toBe(0)
+})
+
+test('the terminal title counts unread messages', async () => {
+  await start(null, 32, undefined, { terminal: '' })
+  expect(titlesSet().at(-1)).toBe('hushhash')
+  await alice.send(identitySession.address, 'one')
+  await alice.send(identitySession.address, 'two')
+  await until(() => titlesSet().at(-1) === 'hushhash (2)', 'unread in the title')
+  await clickConversation(alice.identity.address)
+  await until(() => titlesSet().at(-1) === 'hushhash', 'read, the count goes')
 })
