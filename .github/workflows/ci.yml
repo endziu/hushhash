@@ -23,7 +23,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.3
 
       # Installs `sfw`, which blocks known-malicious packages during install.
       # Pinned to a commit SHA, per Socket's guidance for security controls.
