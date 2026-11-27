@@ -118,8 +118,11 @@ async function start(partner: Address | null | undefined = alice.identity.addres
     if (options.terminal) stdin.emit('data', Buffer.from(`\x1bP>|${options.terminal}\x1b\\`))
     await ready
   }
-  if (options.truecolor) setRendererCapabilities(setup.renderer, { rgb: true })
-  if (options.hyperlinks) setRendererCapabilities(setup.renderer, { hyperlinks: true })
+  // The test renderer otherwise reads TERM and COLORTERM, which would make
+  // these tests pass or fail with the terminal they run in.
+  if (options.terminal === undefined) {
+    setRendererCapabilities(setup.renderer, { rgb: options.truecolor === true, hyperlinks: options.hyperlinks === true })
+  }
   const state = options.statePath ? TuiState.load(options.statePath, keypair.address) : undefined
   app = new App(setup.renderer, identitySession, { server: server.url.origin, ttl: 1800, partner: partner ?? undefined, idleMs, theme: options.theme, desktopTheme: options.desktopTheme, state, identityPath: options.identityPath, bell: () => { bells++ } })
   void app.run()
