@@ -39,9 +39,11 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
+  // Sign in once per identity. A failure waits for the Retry button instead of
+  // looping, which would only run into the rate limit.
   useEffect(() => {
-    if (identity && isRegistered && !token && !sessionLoading && !transitioning) login()
-  }, [identity, isRegistered, token, sessionLoading, transitioning, login])
+    if (identity && isRegistered && !token && !sessionLoading && !loginError && !transitioning) login()
+  }, [identity, isRegistered, token, sessionLoading, loginError, transitioning, login])
 
   useEffect(() => {
     const handleAuthExpired = () => sessionLogout()
@@ -55,18 +57,7 @@ function AppContent() {
   }, [])
 
   if (idLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-2">
-        {idError ? (
-          <>
-            <p className="text-danger">{idError}</p>
-            <button onClick={() => window.location.reload()} className="btn">Retry</button>
-          </>
-        ) : (
-          <span className="text-text-3">Initializing...</span>
-        )}
-      </div>
-    )
+    return <div className="flex items-center justify-center h-full text-text-3">Initializing...</div>
   }
 
   if (transitioning) {
@@ -74,6 +65,15 @@ function AppContent() {
   }
 
   if (!token) {
+    // Registration failed, so sign-in never starts: show why and offer a fresh start.
+    if (idError && !isRegistered) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-2">
+          <p className="text-danger">{idError}</p>
+          <button onClick={() => window.location.reload()} className="btn">Retry</button>
+        </div>
+      )
+    }
     if (loginError) {
       return (
         <div className="flex flex-col items-center justify-center h-full gap-2">
