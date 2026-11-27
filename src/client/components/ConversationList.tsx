@@ -2,7 +2,7 @@ import { shortAddress, type Address } from '../../shared/address'
 import { useState, useEffect, useRef } from 'preact/hooks'
 import { QrCode, X } from 'lucide-preact'
 import { MergedConversation } from '../hooks/useConversations'
-import { getLastSeenKey, subscribeLastSeen } from '../lib/contacts'
+import { lastSeen, subscribeLastSeen } from '../lib/contacts'
 import { fmtDay, fmtTime } from '../lib/display'
 import { AddressAvatar } from './AddressAvatar'
 import { ErrorState } from './ErrorState'
@@ -50,11 +50,11 @@ export function ConversationList({ conversations, activeAddress, selfAddress, on
   useEffect(() => {
     const map: Record<string, boolean> = {}
     for (const conv of conversations) {
-      const lastSeen = localStorage.getItem(getLastSeenKey(conv.address))
-      map[conv.address] = !lastSeen || Number(lastSeen) < conv.last_message_at
+      const seenThrough = lastSeen(selfAddress, conv.address)
+      map[conv.address] = !seenThrough || seenThrough < conv.last_message_at
     }
     setUnreadMap(map)
-  }, [conversations, seenVersion])
+  }, [conversations, seenVersion, selfAddress])
 
   // The notice sits above the list rather than replacing it: a failed refresh
   // while cached contacts are on screen must not pass the stale list off as

@@ -104,7 +104,7 @@ export function useMessages(recipientAddress: Address | null, identity: Keypair 
   const liveEvent = useCallback((event: LiveEvent) => selected.current?.session?.liveEvent(event), [])
 
   useEffect(() => {
-    if (recipientAddress && snapshot.seenThrough !== null) markConversationSeen(recipientAddress, snapshot.seenThrough)
+    if (identity && recipientAddress && snapshot.seenThrough !== null) markConversationSeen(identity.address, recipientAddress, snapshot.seenThrough)
   })
 
   return {

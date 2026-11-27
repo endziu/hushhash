@@ -10,9 +10,9 @@ export interface MergedConversation extends Conversation {
   stale?: boolean
 }
 
-function withKnownContacts(live: Conversation[]): MergedConversation[] {
-  const liveVisible = live.filter(c => !isRemoved(c.address, c.last_message_at))
-  const known = mergeContacts(liveVisible)
+function withKnownContacts(owner: Address, live: Conversation[]): MergedConversation[] {
+  const liveVisible = live.filter(c => !isRemoved(owner, c.address, c.last_message_at))
+  const known = mergeContacts(owner, liveVisible)
   const liveAddresses = new Set(liveVisible.map(c => c.address))
   const stale = Object.values(known)
     .filter(c => !liveAddresses.has(c.address))
@@ -20,14 +20,25 @@ function withKnownContacts(live: Conversation[]): MergedConversation[] {
   return [...liveVisible, ...stale].sort((a, b) => b.last_message_at - a.last_message_at)
 }
 
-export function useConversations(token: string | null) {
-  const [conversations, setConversations] = useState<MergedConversation[]>(() =>
-    Object.values(loadContacts())
-      .map(c => ({ ...c, stale: true }))
-      .sort((a, b) => b.last_message_at - a.last_message_at)
-  )
+// The conversations this browser remembers for `owner`, until the server's list arrives.
+function cachedConversations(owner: Address): MergedConversation[] {
+  return Object.values(loadContacts(owner))
+    .map(c => ({ ...c, stale: true }))
+    .sort((a, b) => b.last_message_at - a.last_message_at)
+}
+
+/** `owner` is the signed-in identity, whose remembered conversations and labels are shown. */
+export function useConversations(owner: Address, token: string | null) {
+  const [conversations, setConversations] = useState(() => cachedConversations(owner))
   const [error, setError] = useState<string | null>(null)
-  const [labels, setLabels] = useState(loadLabels)
+  const [labels, setLabels] = useState(() => loadLabels(owner))
+  const ownerRef = useRef(owner)
+  useEffect(() => {
+    if (ownerRef.current === owner) return
+    ownerRef.current = owner
+    setConversations(cachedConversations(owner))
+    setLabels(loadLabels(owner))
+  }, [owner])
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   // Refreshes can overlap (token change, SSE, retry click). Only the newest one
   // is allowed to write state, so a slow failure can't clobber a newer success.
@@ -56,7 +67,7 @@ export function useConversations(token: string | null) {
       try {
         const data = await api.getConversations(token)
         if (gen !== loadGenRef.current) return superseded()
-        setConversations(withKnownContacts(data.conversations))
+        setConversations(withKnownContacts(owner, data.conversations))
         return 'refreshed'
       } catch (err) {
         if (gen !== loadGenRef.current) return superseded()
@@ -67,29 +78,29 @@ export function useConversations(token: string | null) {
     })()
     latestRefresh.current = request
     return request
-  }, [token])
+  }, [owner, token])
 
   const setLabel = useCallback((address: Address, name: string) => {
     setLabels(prev => {
       const next: Record<Address, string> = { ...prev, [address]: name.trim() }
       if (!name.trim()) delete next[address]
-      saveLabels(next)
+      saveLabels(owner, next)
       return next
     })
-  }, [])
+  }, [owner])
 
   // For a partner who is done with that address: off the list, name forgotten.
   // Their next message, if one ever comes, brings the conversation back unnamed.
   const removeConversation = useCallback((address: Address) => {
-    markConversationRemoved(address)
+    markConversationRemoved(owner, address)
     setLabels(prev => {
       const next = { ...prev }
       delete next[address]
-      saveLabels(next)
+      saveLabels(owner, next)
       return next
     })
     setConversations(prev => prev.filter(c => c.address !== address))
-  }, [])
+  }, [owner])
 
   // Debounced: SSE can fire a burst of these. A retry click wants `reload`
   // instead, so it isn't deferred behind the 300 ms timer.

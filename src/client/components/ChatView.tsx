@@ -31,7 +31,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ recipientAddress, identity, token, navigate, onConnectedChange, sidebarTop, onShare }: ChatViewProps) {
-  const { conversations, refresh: refreshConversations, reload: reloadConversations, error: conversationsError, labels, setLabel, removeConversation } = useConversations(token)
+  const { conversations, refresh: refreshConversations, reload: reloadConversations, error: conversationsError, labels, setLabel, removeConversation } = useConversations(identity.address, token)
   const [newChatAddr, setNewChatAddr] = useState<string | null>(null)
   const [newChatName, setNewChatName] = useState('')
   const [newChatError, setNewChatError] = useState('')
@@ -65,7 +65,7 @@ export function ChatView({ recipientAddress, identity, token, navigate, onConnec
         return
       // Nothing is left to read in a cleared conversation, open or not.
       case 'conversation-cleared':
-        markConversationSeen(event.data.address, event.data.cleared_at)
+        markConversationSeen(identity.address, event.data.address, event.data.cleared_at)
         refreshConversations()
         liveEvent(event)
         return
@@ -92,7 +92,7 @@ export function ChatView({ recipientAddress, identity, token, navigate, onConnec
   const handleClearConversation = async () => {
     if (!recipientAddress) return
     const clearedAt = await clearConversation()
-    markConversationSeen(recipientAddress, clearedAt)
+    markConversationSeen(identity.address, recipientAddress, clearedAt)
     refreshConversations()
   }
 

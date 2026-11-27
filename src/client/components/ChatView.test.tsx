@@ -10,6 +10,7 @@ import * as serverConstants from '../../server/constants'
 import { ChatClient } from '../../cli/client'
 import { parsePrivateKey } from '../../cli/identity'
 import { signEIP191, type Keypair } from '../../shared/keypair'
+import { loadLabels, saveLabels } from '../lib/contacts'
 import { DELIVERY_CAPABILITY, type MessageLifecycle, type OpeningResponse } from '../../shared/message-envelope'
 
 // The mounted view talks to a real in-process server over HTTP and SSE. Only
@@ -166,7 +167,7 @@ function mount(recipient: Address | null = aliceAddress) {
     navigations,
     text: () => container.textContent ?? '',
     select(address: Address | null) { selected = address; render(view(), container) },
-    switchIdentity(next: Keypair, nextToken: string, address: Address) {
+    switchIdentity(next: Keypair, nextToken: string, address: Address | null) {
       identity = next
       token = nextToken
       selected = address
@@ -415,6 +416,20 @@ test('switching identity discards in-flight opening results', async () => {
   await Bun.sleep(150)
   expect(view.text()).not.toContain('for bob only')
   await carol.close()
+})
+
+test("another identity never lists the previous one's partners or labels", async () => {
+  const carolKey = parsePrivateKey('56'.repeat(32))
+  const carolToken = await createSession(carolKey)
+  saveLabels(bobAddress, { [aliceAddress]: 'Alice' })
+  await alice.send(bobAddress, 'for bob only', 300)
+  const view = mount(null)
+  await waitFor(() => view.container.querySelector('nav li')?.textContent?.includes('Alice') ?? false)
+
+  view.switchIdentity(carolKey, carolToken, null)
+  await waitFor(() => view.text().includes('No conversations yet'))
+  expect(view.text()).not.toContain('Alice')
+  expect(view.text()).not.toContain('0x1C5A')
 })
 
 test("a new identity loads its conversation once, on its own stream", async () => {
@@ -735,7 +750,7 @@ test('the clear button takes two taps and clears the conversation for both parti
 })
 
 test('the open conversation names the partner by their label and your own messages as You', async () => {
-  localStorage.setItem('conversation_labels', JSON.stringify({ [aliceAddress]: 'Alice' }))
+  saveLabels(bobAddress, { [aliceAddress]: 'Alice' })
   const otherDevice = new ChatClient(origin, bobKey)
   await alice.send(bobKey.address, 'hi from alice', 300)
   await otherDevice.send(aliceAddress, 'hi from me', 300)
@@ -749,7 +764,7 @@ test('the open conversation names the partner by their label and your own messag
 })
 
 test('removing a conversation takes two taps and forgets its label', async () => {
-  localStorage.setItem('conversation_labels', JSON.stringify({ [aliceAddress]: 'Alice' }))
+  saveLabels(bobAddress, { [aliceAddress]: 'Alice' })
   await alice.send(bobKey.address, 'before removing', 300)
   const view = mount()
   await waitFor(() => view.text().includes('before removing'))
@@ -762,7 +777,7 @@ test('removing a conversation takes two taps and forgets its label', async () =>
 
   button('Confirm remove conversation').click()
   await waitFor(() => !listed())
-  expect(JSON.parse(localStorage.getItem('conversation_labels')!)).toEqual({})
+  expect(loadLabels(bobAddress)).toEqual({})
 
   // Should the address ever write again, it comes back unnamed.
   await alice.send(bobKey.address, 'back again', 300)
@@ -930,7 +945,7 @@ test('identity presentation copies checksums and uses the same checksummed link 
 test('conversation address display and copying use its checksum', async () => {
   // Independently known checksum for the deterministic 0x12… private key.
   const checksum = '0x1C5A77d9FA7eF466951B2F01F724BCa3A5820b63'
-  localStorage.setItem('conversation_labels', JSON.stringify({ [aliceAddress]: 'Alice' }))
+  saveLabels(bobAddress, { [aliceAddress]: 'Alice' })
   const view = mount()
   const writes: string[] = []
   const copy = spyOn(navigator.clipboard, 'writeText').mockImplementation(async text => { writes.push(text) })
