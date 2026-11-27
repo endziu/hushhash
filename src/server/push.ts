@@ -1,7 +1,7 @@
 import type { Address } from '../shared/address.ts';
 import webpush from 'web-push';
 import { deletePushSubscription, getPushSubscriptionsForAddress } from './db.ts';
-import { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, log, warn, error } from './constants.ts';
+import { PUSH_CONFIGURED, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, log, warn, error } from './constants.ts';
 import { pushSuppressingConnectionCount } from './sse.ts';
 
 export type SendPush = (
@@ -11,13 +11,12 @@ export type SendPush = (
 
 const SEND_TIMEOUT_MS = 15_000;
 
-const pushEnabled = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
-if (pushEnabled) {
+if (PUSH_CONFIGURED) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 }
 
 // No payload: the push relay and service worker learn nothing beyond "deliver a wake-up".
-const configuredSend: SendPush | null = pushEnabled
+const configuredSend: SendPush | null = PUSH_CONFIGURED
   ? (subscription, { TTL, urgency }) => webpush.sendNotification(subscription, null, { TTL, urgency, timeout: SEND_TIMEOUT_MS })
   : null;
 let send = configuredSend;

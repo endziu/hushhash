@@ -4,10 +4,10 @@ import { json, readJson, getSessionAddress, type Context } from '../http.ts';
 import { validatePushSubscription } from '../validation.ts';
 import { ipAddressKey } from '../rate-limit.ts';
 import { pushMutationLimiter } from '../rate-limiters.ts';
-import { VAPID_PUBLIC_KEY } from '../constants.ts';
+import { PUSH_CONFIGURED, VAPID_PUBLIC_KEY } from '../constants.ts';
 
 export async function handleGetVapidPublicKey(_ctx: Context): Promise<Response> {
-  if (!VAPID_PUBLIC_KEY) return json({ error: 'Push not configured' }, 503);
+  if (!PUSH_CONFIGURED) return json({ error: 'Push not configured' }, 503);
   return json({ publicKey: VAPID_PUBLIC_KEY });
 }
 
