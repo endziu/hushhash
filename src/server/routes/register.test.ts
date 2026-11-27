@@ -26,7 +26,7 @@ const publicKey = bytesToHex(secp.getPublicKey(hexToBytes(privateKey), true));
 function context(
   ip: string,
   path = '/api/register/challenge',
-  body: Record<string, unknown> = { address, pubkey: publicKey },
+  body: unknown = { address, pubkey: publicKey },
   origin?: string,
 ): Context {
   const headers = new Headers({ 'Content-Type': 'application/json' });
@@ -143,6 +143,16 @@ describe('registration write rate limit', () => {
       ));
 
       expect(response.status).toBe(count <= 10 ? 200 : 429);
+    }
+  });
+});
+
+describe('registration request bodies', () => {
+  test('a JSON body that is not an object is rejected with 400, not a server error', async () => {
+    for (const body of [null, [], 7, 'address']) {
+      const ip = `register-body-test-${Math.random()}`;
+      expect((await handleRegisterChallenge(context(ip, '/api/register/challenge', body))).status).toBe(400);
+      expect((await handleRegister(context(ip, '/api/register', body))).status).toBe(400);
     }
   });
 });

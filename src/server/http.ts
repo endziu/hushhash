@@ -24,6 +24,14 @@ export function json(body: unknown, status = 200): Response {
 }
 
 /** Count actual streamed bytes, never trusting Content-Length. */
+/** Like `readJson`, but anything other than a JSON object is rejected with 400 too. */
+export async function readJsonObject(req: Request, maxBytes: number): Promise<Record<string, unknown> | Response> {
+  const body = await readJson(req, maxBytes);
+  if (body instanceof Response) return body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return json({ error: 'Invalid JSON' }, 400);
+  return body as Record<string, unknown>;
+}
+
 export async function readJson(req: Request, maxBytes: number): Promise<unknown> {
   const reader = req.body?.getReader();
   if (!reader) return json({ error: 'Invalid JSON' }, 400);

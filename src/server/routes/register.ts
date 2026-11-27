@@ -1,12 +1,12 @@
 import { parseAddress, type Address } from '../../shared/address.ts';
 import { ChallengeStore } from '../challenge.ts';
 import { registerPubkey } from '../db.ts';
-import { json } from '../http.ts';
+import { json, readJsonObject } from '../http.ts';
 import { requestOrigin } from '../origin.ts';
 import { registerChallengeLimiter, registerLimiter } from '../rate-limiters.ts';
 import { isValidSig, normalizeAddressBoundPubkey } from '../validation.ts';
 import { verifySig } from '../verify.ts';
-import { log, warn } from '../constants.ts';
+import { log, warn, MAX_REQUEST_BODY_BYTES } from '../constants.ts';
 import { buildRegistrationChallenge } from '../../shared/registration-challenge.ts';
 import type { Context } from '../http.ts';
 
@@ -22,12 +22,8 @@ export async function handleRegisterChallenge({ req, ip }: Context): Promise<Res
     return json({ error: 'Too many requests' }, 429);
   }
 
-  let body: { address?: unknown; pubkey?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJsonObject(req, MAX_REQUEST_BODY_BYTES);
+  if (body instanceof Response) return body;
 
   const address = parseAddress(typeof body.address === 'string' ? body.address.trim() : body.address);
   if (!address) {
@@ -59,12 +55,10 @@ export async function handleRegister({ req, ip }: Context): Promise<Response> {
     return json({ error: 'Too many requests' }, 429);
   }
 
-  let body: { address?: unknown; pubkey?: unknown; signature?: unknown; nonce?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
+  const body = await readJsonObject(req, MAX_REQUEST_BODY_BYTES);
+  if (body instanceof Response) {
     warn('[invalid] register malformed JSON');
-    return json({ error: 'Invalid JSON' }, 400);
+    return body;
   }
 
   const address = parseAddress(typeof body.address === 'string' ? body.address.trim() : body.address);
