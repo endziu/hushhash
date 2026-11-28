@@ -21,7 +21,7 @@ export async function handleAuthChallenge({ req, ip }: Context): Promise<Respons
 
   const body = await readJsonObject(req, MAX_REQUEST_BODY_BYTES);
   if (body instanceof Response) {
-    warn('[invalid] auth-challenge malformed JSON');
+    warn(`[invalid] auth-challenge ${body.status === 413 ? 'body too large' : 'malformed JSON'}`);
     return body;
   }
 
@@ -54,7 +54,7 @@ export async function handleAuthSession({ req, ip }: Context): Promise<Response>
 
   const body = await readJsonObject(req, MAX_REQUEST_BODY_BYTES);
   if (body instanceof Response) {
-    warn('[invalid] auth-session malformed JSON');
+    warn(`[invalid] auth-session ${body.status === 413 ? 'body too large' : 'malformed JSON'}`);
     return body;
   }
 

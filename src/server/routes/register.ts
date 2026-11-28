@@ -57,7 +57,7 @@ export async function handleRegister({ req, ip }: Context): Promise<Response> {
 
   const body = await readJsonObject(req, MAX_REQUEST_BODY_BYTES);
   if (body instanceof Response) {
-    warn('[invalid] register malformed JSON');
+    warn(`[invalid] register ${body.status === 413 ? 'body too large' : 'malformed JSON'}`);
     return body;
   }
 
