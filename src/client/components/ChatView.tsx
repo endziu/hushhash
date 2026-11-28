@@ -11,7 +11,7 @@ import { reloadForUpdate, useClientUpdateRequired } from '../hooks/useClientUpda
 import { Keypair } from '../../shared/keypair'
 import { api } from '../lib/api'
 import { errorMessage } from '../lib/errors'
-import { markConversationSeen } from '../lib/contacts'
+import { markConversationSeen } from '../lib/conversation-store'
 import type { ConnectionEpoch } from '../lib/sse-connection'
 import type { LiveEvent } from '../../shared/live-events'
 import { Camera, Lock, Plus } from 'lucide-preact'

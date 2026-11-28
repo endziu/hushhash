@@ -2,7 +2,7 @@ import { shortAddress, type Address } from '../../shared/address'
 import { useState, useEffect, useRef } from 'preact/hooks'
 import { QrCode, X } from 'lucide-preact'
 import { MergedConversation } from '../hooks/useConversations'
-import { lastSeen, subscribeLastSeen } from '../lib/contacts'
+import { lastSeen, subscribeLastSeen } from '../lib/conversation-store'
 import { fmtDay, fmtTime } from '../lib/display'
 import { AddressAvatar } from './AddressAvatar'
 import { ErrorState } from './ErrorState'
@@ -57,7 +57,7 @@ export function ConversationList({ conversations, activeAddress, selfAddress, on
   }, [conversations, seenVersion, selfAddress])
 
   // The notice sits above the list rather than replacing it: a failed refresh
-  // while cached contacts are on screen must not pass the stale list off as
+  // while cached conversations are on screen must not pass the stale list off as
   // live. An empty-but-successful load still gets the plain empty state.
   const errorNotice = error && <ErrorState title="Failed to load conversations" detail={error} onRetry={onRetry} />
 

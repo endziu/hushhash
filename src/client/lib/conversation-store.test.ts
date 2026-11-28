@@ -2,7 +2,7 @@ import { requireAddress } from '../../shared/address'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
 
-let contacts: typeof import('./contacts')
+let store: typeof import('./conversation-store')
 const bob = requireAddress(`0x${'b'.repeat(40)}`)
 const carol = requireAddress(`0x${'c'.repeat(40)}`)
 const alice = requireAddress(`0x${'a'.repeat(40)}`)
@@ -10,41 +10,50 @@ const dave = requireAddress(`0x${'d'.repeat(40)}`)
 
 beforeAll(async () => {
   GlobalRegistrator.register({ url: 'http://localhost' })
-  contacts = await import('./contacts')
+  store = await import('./conversation-store')
 })
 afterAll(() => GlobalRegistrator.unregister())
 beforeEach(() => localStorage.clear())
 
-function remember(owner: typeof bob, partner: typeof bob) {
-  contacts.mergeContacts(owner, [{ address: partner, last_message_at: 1000 }])
-  contacts.saveLabels(owner, { [partner]: 'Partner' })
-  contacts.markConversationSeen(owner, partner, 1000)
+function remember(self: typeof bob, partner: typeof bob) {
+  store.rememberConversations(self, [{ address: partner, last_message_at: 1000 }])
+  store.saveLabels(self, { [partner]: 'Partner' })
+  store.markConversationSeen(self, partner, 1000)
 }
 
 test("one identity's conversations, labels and read markers are not another's", () => {
   remember(bob, alice)
-  contacts.markConversationRemoved(bob, dave)
+  store.markConversationRemoved(bob, dave)
 
-  expect(Object.keys(contacts.loadContacts(bob))).toEqual([alice])
-  expect(contacts.loadContacts(carol)).toEqual({})
-  expect(contacts.loadLabels(carol)).toEqual({})
-  expect(contacts.lastSeen(bob, alice)).toBe(1000)
-  expect(contacts.lastSeen(carol, alice)).toBeNull()
-  expect(contacts.isRemoved(bob, dave, 0)).toBe(true)
-  expect(contacts.isRemoved(carol, dave, 0)).toBe(false)
+  expect(Object.keys(store.loadRememberedConversations(bob))).toEqual([alice])
+  expect(store.loadRememberedConversations(carol)).toEqual({})
+  expect(store.loadLabels(carol)).toEqual({})
+  expect(store.lastSeen(bob, alice)).toBe(1000)
+  expect(store.lastSeen(carol, alice)).toBeNull()
+  expect(store.isRemoved(bob, dave, 0)).toBe(true)
+  expect(store.isRemoved(carol, dave, 0)).toBe(false)
+})
+
+test('removing a conversation forgets its read marker and keeps the others', () => {
+  remember(bob, alice)
+  remember(bob, dave)
+  store.markConversationRemoved(bob, dave)
+
+  expect(store.lastSeen(bob, dave)).toBeNull()
+  expect(store.lastSeen(bob, alice)).toBe(1000)
 })
 
 test('forgetting an identity deletes everything stored for it and nothing else', () => {
   remember(bob, alice)
-  contacts.markConversationRemoved(bob, dave)
+  store.markConversationRemoved(bob, dave)
   remember(carol, alice)
   localStorage.setItem('hushhash_theme_v1', 'dark')
 
-  contacts.forgetContactData(bob)
+  store.forgetConversationData(bob)
 
   expect(Object.keys(localStorage).filter(key => key.includes(bob))).toEqual([])
-  expect(Object.keys(contacts.loadContacts(carol))).toEqual([alice])
-  expect(contacts.lastSeen(carol, alice)).toBe(1000)
+  expect(Object.keys(store.loadRememberedConversations(carol))).toEqual([alice])
+  expect(store.lastSeen(carol, alice)).toBe(1000)
   expect(localStorage.getItem('hushhash_theme_v1')).toBe('dark')
 })
 
@@ -53,23 +62,37 @@ function saveLegacy() {
   localStorage.setItem('hushhash_deleted_contacts_v1', JSON.stringify({ [dave]: 7 }))
   localStorage.setItem('conversation_labels', JSON.stringify({ [alice]: 'Alice' }))
   localStorage.setItem(`last_seen_${alice}`, '5')
+  localStorage.setItem(`last_seen_${dave}`, '6')
 }
-const legacyKeys = () => Object.keys(localStorage).filter(key => !key.startsWith('hushhash_0x'))
+const legacyKeys = () => Object.keys(localStorage).filter(key => !key.includes(bob))
 
 test('data saved before it was kept per identity moves to the identity this browser holds', () => {
   saveLegacy()
-  contacts.adoptLegacyContactData(bob)
+  store.adoptLegacyConversationData(bob)
 
   expect(legacyKeys()).toEqual([])
-  expect(contacts.loadContacts(bob)).toEqual({ [alice]: { address: alice, last_message_at: 5 } })
-  expect(contacts.loadLabels(bob)).toEqual({ [alice]: 'Alice' })
-  expect(contacts.isRemoved(bob, dave, 7)).toBe(true)
-  expect(contacts.lastSeen(bob, alice)).toBe(5)
+  expect(store.loadRememberedConversations(bob)).toEqual({ [alice]: { address: alice, last_message_at: 5 } })
+  expect(store.loadLabels(bob)).toEqual({ [alice]: 'Alice' })
+  expect(store.isRemoved(bob, dave, 7)).toBe(true)
+  expect(store.lastSeen(bob, alice)).toBe(5)
+  expect(store.lastSeen(bob, dave)).toBe(6)
+})
+
+test('moving old data never overwrites what the identity already has', () => {
+  store.saveLabels(bob, { [alice]: 'Newer' })
+  store.markConversationSeen(bob, alice, 9)
+  saveLegacy()
+  store.adoptLegacyConversationData(bob)
+
+  expect(legacyKeys()).toEqual([])
+  expect(store.loadLabels(bob)).toEqual({ [alice]: 'Newer' })
+  expect(store.lastSeen(bob, alice)).toBe(9)
+  expect(store.lastSeen(bob, dave)).toBeNull()
 })
 
 test('old shared data is deleted when no identity is left to own it', () => {
   saveLegacy()
-  contacts.adoptLegacyContactData(null)
+  store.adoptLegacyConversationData(null)
 
   expect(Object.keys(localStorage)).toEqual([])
 })
