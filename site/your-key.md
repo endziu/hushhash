@@ -35,8 +35,8 @@ one starts its timer everywhere. Notifications are turned on separately in each 
 ## Burn your identity
 
 **Settings → Burn identity… → Burn** deletes your account and its messages from this browser
-and the server. If you kept the key, you can import it later to reuse the address, but the
-messages are gone.
+and the server, along with the conversation list and names this browser kept for it. If you
+kept the key, you can import it later to reuse the address, but the messages are gone.
 
 ## Inactive addresses
 

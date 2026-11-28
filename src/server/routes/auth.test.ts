@@ -105,3 +105,13 @@ describe('redemption origin binding', () => {
     expect(data.token).toBeTruthy();
   });
 });
+
+describe('auth request bodies', () => {
+  test('a JSON body that is not an object is rejected with 400, not a server error', async () => {
+    for (const body of [null, [], 7, 'address']) {
+      const ip = `auth-body-test-${Math.random()}`;
+      expect((await handleAuthChallenge(postContext(ip, '/api/auth/challenge', body))).status).toBe(400);
+      expect((await handleAuthSession(postContext(ip, '/api/auth/session', body))).status).toBe(400);
+    }
+  });
+});

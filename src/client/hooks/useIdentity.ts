@@ -4,6 +4,7 @@ import { Keypair, generateKeypair } from '../../shared/keypair'
 import { loadKeypair, saveKeypair, clearKeypair } from '../lib/keypair-storage'
 import { api } from '../lib/api'
 import { getToken, clearToken } from '../lib/session'
+import { adoptLegacyConversationData, forgetConversationData } from '../lib/conversation-store'
 
 export function useIdentity() {
   const [identity, setIdentity] = useState<Keypair | null>(null)
@@ -38,6 +39,7 @@ export function useIdentity() {
       setLoading(true)
       try {
         const loaded = loadKeypair()
+        adoptLegacyConversationData(loaded?.address ?? null)
         const keypair = loaded ?? generateKeypair()
         if (!loaded) saveKeypair(keypair)
 
@@ -79,6 +81,7 @@ export function useIdentity() {
       }
     }
 
+    if (identity) forgetConversationData(identity.address)
     clearKeypair()
     clearToken()
     setIdentity(null)

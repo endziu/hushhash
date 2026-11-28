@@ -26,10 +26,13 @@ function onError(error: ApiError, { path, token }: { path: string; token: string
   if (error.code === CLIENT_UPDATE_REQUIRED_CODE) globalThis.dispatchEvent(new CustomEvent(CLIENT_UPDATE_REQUIRED_EVENT))
 }
 
-// Created on first use: challenges are bound to the page's origin.
-let client: ProtocolClient | null = null
+// Created on first use and again if the page's origin changes, since
+// challenges are bound to the origin they were issued for.
+let client: { origin: string, protocol: ProtocolClient } | null = null
 function protocol(): ProtocolClient {
-  return client ??= new ProtocolClient(window.location.origin, (path, init) => fetch(path, init), onError)
+  const origin = window.location.origin
+  if (client?.origin !== origin) client = { origin, protocol: new ProtocolClient(origin, (path, init) => fetch(path, init), onError) }
+  return client.protocol
 }
 
 // Auth is a per-request dependency: every caller passes the bearer token for

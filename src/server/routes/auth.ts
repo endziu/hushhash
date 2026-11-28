@@ -2,12 +2,12 @@ import { parseAddress } from '../../shared/address.ts';
 import { randomBytes } from 'node:crypto';
 import { ChallengeStore } from '../challenge.ts';
 import { createSession } from '../db.ts';
-import { json } from '../http.ts';
+import { json, readJsonObject } from '../http.ts';
 import { requestOrigin } from '../origin.ts';
 import { authChallengeLimiter, authSessionLimiter } from '../rate-limiters.ts';
 import { isValidSig } from '../validation.ts';
 import { verifySig } from '../verify.ts';
-import { log, warn, SESSION_TTL_MS } from '../constants.ts';
+import { log, warn, SESSION_TTL_MS, MAX_REQUEST_BODY_BYTES } from '../constants.ts';
 import { buildSessionChallenge } from '../../shared/session-challenge.ts';
 import type { Context } from '../http.ts';
 
@@ -19,12 +19,10 @@ export async function handleAuthChallenge({ req, ip }: Context): Promise<Respons
     return json({ error: 'Too many requests' }, 429);
   }
 
-  let body: { address?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    warn('[invalid] auth-challenge malformed JSON');
-    return json({ error: 'Invalid JSON' }, 400);
+  const body = await readJsonObject(req, MAX_REQUEST_BODY_BYTES);
+  if (body instanceof Response) {
+    warn(`[invalid] auth-challenge ${body.status === 413 ? 'body too large' : 'malformed JSON'}`);
+    return body;
   }
 
   const address = parseAddress(typeof body.address === 'string' ? body.address.trim() : body.address);
@@ -54,12 +52,10 @@ export async function handleAuthSession({ req, ip }: Context): Promise<Response>
     return json({ error: 'Too many requests' }, 429);
   }
 
-  let body: { nonce?: unknown; signature?: unknown; address?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    warn('[invalid] auth-session malformed JSON');
-    return json({ error: 'Invalid JSON' }, 400);
+  const body = await readJsonObject(req, MAX_REQUEST_BODY_BYTES);
+  if (body instanceof Response) {
+    warn(`[invalid] auth-session ${body.status === 413 ? 'body too large' : 'malformed JSON'}`);
+    return body;
   }
 
   const nonce = typeof body.nonce === 'string' ? body.nonce : '';

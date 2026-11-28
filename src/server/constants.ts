@@ -54,9 +54,12 @@ export const MAX_SSE_CONNECTIONS_PER_IP = 20;
 
 export const VAPID_PUBLIC_KEY = process.env['VAPID_PUBLIC_KEY'] ?? '';
 export const VAPID_PRIVATE_KEY = process.env['VAPID_PRIVATE_KEY'] ?? '';
-export const VAPID_SUBJECT = process.env['VAPID_SUBJECT'] ?? 'mailto:koper.andrzej@gmail.com';
-if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-  warn('[push] VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY not set — push notifications disabled');
+// The operator's contact for push services. There is no default, so a
+// self-hosted server never sends someone else's address.
+export const VAPID_SUBJECT = process.env['VAPID_SUBJECT'] ?? '';
+export const PUSH_CONFIGURED = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && VAPID_SUBJECT);
+if (!PUSH_CONFIGURED) {
+  warn('[push] VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT not all set — push notifications disabled');
 }
 
 export const distDir = join(import.meta.dir, '..', '..', 'dist');

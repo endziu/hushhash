@@ -6,7 +6,7 @@ import type { LiveConnection } from './useSSE'
 import { Keypair } from '../../shared/keypair'
 import { sealMessage, unsealMessage, type DecryptedMessage } from '../../shared/protocol-client'
 import { errorMessage } from '../lib/errors'
-import { markConversationSeen } from '../lib/contacts'
+import { markConversationSeen } from '../lib/conversation-store'
 import { ConversationSession, type ConversationProtocol, type SessionSnapshot } from '../lib/conversation-session'
 import type { ConnectionEpoch } from '../lib/sse-connection'
 import { isWindowAttentive, watchWindowAttention } from '../lib/window-attention'
@@ -104,7 +104,7 @@ export function useMessages(recipientAddress: Address | null, identity: Keypair 
   const liveEvent = useCallback((event: LiveEvent) => selected.current?.session?.liveEvent(event), [])
 
   useEffect(() => {
-    if (recipientAddress && snapshot.seenThrough !== null) markConversationSeen(recipientAddress, snapshot.seenThrough)
+    if (identity && recipientAddress && snapshot.seenThrough !== null) markConversationSeen(identity.address, recipientAddress, snapshot.seenThrough)
   })
 
   return {

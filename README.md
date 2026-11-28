@@ -98,7 +98,7 @@ Open the URL printed by Vite. Debug logging is enabled by the development script
 | `DEBUG` | unset | Set to `1` or `true` for verbose server logs |
 | `VAPID_PUBLIC_KEY` | empty | Web Push public key |
 | `VAPID_PRIVATE_KEY` | empty | Web Push private key |
-| `VAPID_SUBJECT` | mailto value | VAPID contact URI, normally `mailto:you@example.com` |
+| `VAPID_SUBJECT` | empty | Your contact URI for push services, such as `mailto:you@example.com`; push stays off without it |
 | `TRUSTED_PROXY_IPS` | unset | Comma-separated, unscoped IPs of your reverse proxy/edge (IPv6 zone identifiers are rejected). When the direct peer is in this list, the client IP is taken from the rightmost untrusted `X-Forwarded-For` hop; otherwise `X-Forwarded-For` is ignored |
 
 Generate a VAPID pair with:
@@ -107,7 +107,7 @@ Generate a VAPID pair with:
 bunx web-push generate-vapid-keys
 ```
 
-Copy the generated values into `.env`. Rotating the pair invalidates existing browser push subscriptions; each browser recovers when its user clicks **Enable notifications** again. Missing keys do not stop the server; they soft-disable push support.
+Copy the generated values into `.env` and set `VAPID_SUBJECT`. Rotating the pair invalidates existing browser push subscriptions; each browser recovers when its user clicks **Enable notifications** again. A missing key or subject does not stop the server; it soft-disables push support.
 
 ## User docs
 
