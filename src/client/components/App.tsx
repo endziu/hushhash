@@ -66,22 +66,8 @@ function AppContent() {
 
   if (!token) {
     // Registration failed, so sign-in never starts: show why and offer a fresh start.
-    if (idError && !isRegistered) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full gap-2">
-          <p className="text-danger">{idError}</p>
-          <button onClick={() => window.location.reload()} className="btn">Retry</button>
-        </div>
-      )
-    }
-    if (loginError) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full gap-2">
-          <p className="text-danger">{loginError}</p>
-          <button onClick={login} disabled={sessionLoading} className="btn">{sessionLoading ? 'Retrying...' : 'Retry'}</button>
-        </div>
-      )
-    }
+    if (idError && !isRegistered) return <StartupError message={idError} onRetry={() => window.location.reload()} />
+    if (loginError) return <StartupError message={loginError} onRetry={login} retrying={sessionLoading} />
     return <div className="flex items-center justify-center h-full text-text-3">Connecting...</div>
   }
 
@@ -115,5 +101,14 @@ export function App() {
     <ToastProvider>
       <AppContent />
     </ToastProvider>
+  )
+}
+
+function StartupError({ message, onRetry, retrying = false }: { message: string, onRetry: () => void, retrying?: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-2">
+      <p className="text-danger">{message}</p>
+      <button onClick={onRetry} disabled={retrying} className="btn">{retrying ? 'Retrying...' : 'Retry'}</button>
+    </div>
   )
 }
